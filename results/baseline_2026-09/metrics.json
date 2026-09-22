@@ -1,0 +1,237 @@
+{
+  "gerado_em": "2026-09-22T17:24:51",
+  "descricao": "Métricas do baseline V1/V2/V3 (Fase 3) e da ingestão, recomputadas nesta sessão -- reparse read-only do XML/TXT pra ingestão, e silhouette/ARI recalculados a partir dos rótulos já persistidos em track_clusters (v1_structured/v2_audio/v3_audio_only) sem retreinar KMeans. Nada foi escrito no banco por este script.",
+  "metrics": [
+    {
+      "metric": "collection_entradas",
+      "espaco": null,
+      "valor": 1668,
+      "valor_claimed_no_readme": 1668,
+      "bate_com_readme": "sim",
+      "data_verificacao": "2026-09-22",
+      "script_gerador_original": "ingest.py (reparse do XML)",
+      "script_que_recomputou": "src/verify_baseline.py",
+      "observacao": ""
+    },
+    {
+      "metric": "all_tracks_entradas",
+      "espaco": null,
+      "valor": 1649,
+      "valor_claimed_no_readme": 1649,
+      "bate_com_readme": "sim",
+      "data_verificacao": "2026-09-22",
+      "script_gerador_original": "ingest.py (reparse do XML)",
+      "script_que_recomputou": "src/verify_baseline.py",
+      "observacao": ""
+    },
+    {
+      "metric": "faixas_excluidas_escopo",
+      "espaco": null,
+      "valor": 19,
+      "valor_claimed_no_readme": 19,
+      "bate_com_readme": "sim",
+      "data_verificacao": "2026-09-22",
+      "script_gerador_original": "ingest.py (reparse do XML)",
+      "script_que_recomputou": "src/verify_baseline.py",
+      "observacao": ""
+    },
+    {
+      "metric": "tracks_no_banco",
+      "espaco": null,
+      "valor": 1649,
+      "valor_claimed_no_readme": 1649,
+      "bate_com_readme": "sim",
+      "data_verificacao": "2026-09-22",
+      "script_gerador_original": "ingest.py (consulta direta à tabela tracks)",
+      "script_que_recomputou": "src/verify_baseline.py",
+      "observacao": ""
+    },
+    {
+      "metric": "playlists_no_banco",
+      "espaco": null,
+      "valor": 13,
+      "valor_claimed_no_readme": 13,
+      "bate_com_readme": "sim",
+      "data_verificacao": "2026-09-22",
+      "script_gerador_original": "ingest.py (consulta direta)",
+      "script_que_recomputou": "src/verify_baseline.py",
+      "observacao": ""
+    },
+    {
+      "metric": "vinculos_track_playlist",
+      "espaco": null,
+      "valor": 1134,
+      "valor_claimed_no_readme": 1134,
+      "bate_com_readme": "sim",
+      "data_verificacao": "2026-09-22",
+      "script_gerador_original": "ingest.py (consulta direta)",
+      "script_que_recomputou": "src/verify_baseline.py",
+      "observacao": ""
+    },
+    {
+      "metric": "mytag_valores_unicos",
+      "espaco": null,
+      "valor": 44,
+      "valor_claimed_no_readme": 44,
+      "bate_com_readme": "sim",
+      "data_verificacao": "2026-09-22",
+      "script_gerador_original": "ingest.py (consulta direta)",
+      "script_que_recomputou": "src/verify_baseline.py",
+      "observacao": ""
+    },
+    {
+      "metric": "vinculos_track_mytag",
+      "espaco": null,
+      "valor": 1617,
+      "valor_claimed_no_readme": 1617,
+      "bate_com_readme": "sim",
+      "data_verificacao": "2026-09-22",
+      "script_gerador_original": "ingest.py (consulta direta)",
+      "script_que_recomputou": "src/verify_baseline.py",
+      "observacao": ""
+    },
+    {
+      "metric": "faixas_com_pelo_menos_1_tag",
+      "espaco": null,
+      "valor": 333,
+      "valor_claimed_no_readme": 333,
+      "bate_com_readme": "sim",
+      "data_verificacao": "2026-09-22",
+      "script_gerador_original": "ingest.py (consulta direta)",
+      "script_que_recomputou": "src/verify_baseline.py",
+      "observacao": ""
+    },
+    {
+      "metric": "n_faixas",
+      "espaco": "meta",
+      "valor": 1649.0,
+      "valor_claimed_no_readme": 1649,
+      "bate_com_readme": "sim",
+      "data_verificacao": "2026-09-22",
+      "script_gerador_original": "cluster_v1.py",
+      "script_que_recomputou": "src/verify_baseline.py",
+      "observacao": ""
+    },
+    {
+      "metric": "n_features",
+      "espaco": "meta",
+      "valor": 83.0,
+      "valor_claimed_no_readme": 83,
+      "bate_com_readme": "sim",
+      "data_verificacao": "2026-09-22",
+      "script_gerador_original": "cluster_v1.py",
+      "script_que_recomputou": "src/verify_baseline.py",
+      "observacao": ""
+    },
+    {
+      "metric": "silhouette",
+      "espaco": "meta",
+      "valor": 0.3676,
+      "valor_claimed_no_readme": 0.368,
+      "bate_com_readme": "sim",
+      "data_verificacao": "2026-09-22",
+      "script_gerador_original": "cluster_v1.py",
+      "script_que_recomputou": "src/verify_baseline.py",
+      "observacao": ""
+    },
+    {
+      "metric": "n_faixas",
+      "espaco": "meta_audio",
+      "valor": 1648.0,
+      "valor_claimed_no_readme": 1648,
+      "bate_com_readme": "sim",
+      "data_verificacao": "2026-09-22",
+      "script_gerador_original": "cluster_v2.py",
+      "script_que_recomputou": "src/verify_baseline.py",
+      "observacao": ""
+    },
+    {
+      "metric": "n_features",
+      "espaco": "meta_audio",
+      "valor": 111.0,
+      "valor_claimed_no_readme": 111,
+      "bate_com_readme": "sim",
+      "data_verificacao": "2026-09-22",
+      "script_gerador_original": "cluster_v2.py",
+      "script_que_recomputou": "src/verify_baseline.py",
+      "observacao": ""
+    },
+    {
+      "metric": "silhouette",
+      "espaco": "meta_audio",
+      "valor": 0.072,
+      "valor_claimed_no_readme": 0.072,
+      "bate_com_readme": "sim",
+      "data_verificacao": "2026-09-22",
+      "script_gerador_original": "cluster_v2.py",
+      "script_que_recomputou": "src/verify_baseline.py",
+      "observacao": ""
+    },
+    {
+      "metric": "n_faixas",
+      "espaco": "audio",
+      "valor": 1648.0,
+      "valor_claimed_no_readme": 1648,
+      "bate_com_readme": "sim",
+      "data_verificacao": "2026-09-22",
+      "script_gerador_original": "cluster_v3.py",
+      "script_que_recomputou": "src/verify_baseline.py",
+      "observacao": ""
+    },
+    {
+      "metric": "n_features",
+      "espaco": "audio",
+      "valor": 28.0,
+      "valor_claimed_no_readme": 28,
+      "bate_com_readme": "sim",
+      "data_verificacao": "2026-09-22",
+      "script_gerador_original": "cluster_v3.py",
+      "script_que_recomputou": "src/verify_baseline.py",
+      "observacao": ""
+    },
+    {
+      "metric": "silhouette",
+      "espaco": "audio",
+      "valor": 0.0803,
+      "valor_claimed_no_readme": 0.08,
+      "bate_com_readme": "sim",
+      "data_verificacao": "2026-09-22",
+      "script_gerador_original": "cluster_v3.py",
+      "script_que_recomputou": "src/verify_baseline.py",
+      "observacao": ""
+    },
+    {
+      "metric": "ari_meta_x_meta_audio",
+      "espaco": "meta x meta_audio",
+      "valor": 0.0189,
+      "valor_claimed_no_readme": 0.019,
+      "bate_com_readme": "sim",
+      "data_verificacao": "2026-09-22",
+      "script_gerador_original": "cluster_v2.py",
+      "script_que_recomputou": "src/verify_baseline.py",
+      "observacao": "1648 faixas em comum"
+    },
+    {
+      "metric": "ari_audio_x_meta_audio",
+      "espaco": "audio x meta_audio",
+      "valor": 0.9085,
+      "valor_claimed_no_readme": 0.909,
+      "bate_com_readme": "sim",
+      "data_verificacao": "2026-09-22",
+      "script_gerador_original": "cluster_v3.py",
+      "script_que_recomputou": "src/verify_baseline.py",
+      "observacao": "1648 faixas em comum"
+    },
+    {
+      "metric": "ari_audio_x_meta",
+      "espaco": "audio x meta",
+      "valor": 0.009,
+      "valor_claimed_no_readme": 0.009,
+      "bate_com_readme": "sim",
+      "data_verificacao": "2026-09-22",
+      "script_gerador_original": "cluster_v3.py",
+      "script_que_recomputou": "src/verify_baseline.py",
+      "observacao": "1648 faixas em comum"
+    }
+  ]
+}
