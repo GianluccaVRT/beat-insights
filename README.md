@@ -26,29 +26,42 @@ O XML de `Collection` pode conter entradas que não são faixas de set — na bi
 - **MyTag não tem informação de grupo/categoria em nenhum export do Rekordbox** — apenas uma lista plana de valores por faixa, sem indicar a qual grupo cada valor pertence. Isso é uma limitação do produto, não do processo de extração.
 - **Cobertura de MyTag é baixa: só 333 das 1649 faixas (20%) têm pelo menos uma tag.** Isso limita diretamente a qualidade do clustering V1 (ver "Resultados obtidos").
 - **Sem análise temporal de play count.** O Rekordbox expõe `PlayCount` como um contador acumulado, sem timestamp por reprodução — não há como derivar "estilos mais tocados ao longo do tempo" com os dados disponíveis. `PlayCount` é usado como sinal estático (ex: para priorizar quais faixas revisar primeiro), não como série temporal.
-- **1 faixa da Collection não tem arquivo de áudio localizável em disco** (`7A - 122 - GUIGO TESSEROLI - Caminho.mp3` — só sobrou a versão `.wav` gêmea). Fica de fora da extração de features de áudio e dos clusterings V2/V3.
+- **1 faixa da Collection não tem arquivo de áudio localizável em disco** (`7A - 122 - GUIGO TESSEROLI - Caminho.mp3` — só sobrou a versão `.wav` gêmea). Fica de fora da extração de features de áudio e dos espaços `meta_audio`/`audio`.
+- **Empate no espaço `meta` do k-NN, pras faixas sem MyTag.** ~80% das faixas (1316/1649) não têm nenhuma MyTag e ficam com o mesmo vetor de tags (tudo zero) — os "vizinhos mais próximos" tendem a ficar quase empatados entre si (testado: uma faixa sem tag teve só 7 valores de similaridade únicos entre os 10 vizinhos). `similar_tracks` é mais informativo pras 333 faixas com MyTag.
+- **Viés conhecido na avaliação de precision@10 (k-NN) por co-ocorrência em playlist.** Playlists desta biblioteca são majoritariamente organizadas por gênero (`Prog House` 504 faixas, `Afro House` 143) — o espaço `meta`, que inclui gênero como feature direta, é estruturalmente favorecido por essa métrica. Ela mede "concorda com a curadoria de playlist do DJ", não "sinal acústico puro" (ver seção "3 espaços de features + k-NN" abaixo).
+- **UMAP (aba Vizinhos do explorer) preserva vizinhança local, não distância global.** Dois pontos próximos no gráfico são de fato parecidos; a distância entre dois clusters distantes no gráfico não tem significado quantitativo confiável — só PCA (opção alternativa na mesma aba) tenta preservar variância global, com a troca inversa (não preserva vizinhança local).
 
 ## Estrutura do projeto
 
 ```
 data/raw/            Exports do Rekordbox (Export_Playlists.xml, Playlists.txt) -- gitignored, dados pessoais
+docs/decisions/       ADRs -- decisões de arquitetura com contexto, alternativas e consequências
+  ADR-001-tres-espacos-e-knn.md
 sql/schema/           DDL, aplicado em ordem
   001_create_tables.sql   tracks, playlists, track_playlist, mytag_values, track_mytag
-  002_clustering.sql      track_clusters (labels de k-means, por versão: v1_structured / v2_audio / v3_audio_only)
+  002_clustering.sql      track_clusters (labels, por versão: v1_structured/v2_audio/v3_audio_only + novas da Etapa 1)
   003_audio_features.sql  audio_features (tempo/spectral/RMS/MFCCs/chroma extraídos via librosa)
 sql/queries/          Queries analíticas prontas (ver "O que cada query faz" abaixo)
 src/
   ingest.py                Parsing + merge dos dois exports Rekordbox, aplica escopo "All Tracks", popula o schema
-  clustering_common.py     Utilitários compartilhados entre V1/V2: conexão, escolha de k (silhouette), persistência, plot PCA
-  cluster_v1.py             Clustering k-means só com metadados estruturados (BPM, rating, gênero, MyTag one-hot)
+  features.py               Módulo único dos 3 espaços de features (meta/meta_audio/audio) -- usado por clustering e k-NN
+  camelot.py                Roda de Camelot (compatibilidade de key), compartilhado entre query_library e similarity
+  clustering_common.py     Utilitários compartilhados entre clusterings: conexão, escolha de k, persistência, plot PCA
+  cluster_v1.py             Clustering k-means espaço 'meta' (wrapper fino em cima de features.py)
   extract_audio_features.py Extração de features de áudio via librosa, faixa a faixa, incremental/resumível
-  cluster_v2.py             Clustering k-means com metadados + áudio, compara contra V1 (Adjusted Rand Index)
-  cluster_v3.py             Clustering k-means só com áudio (diagnóstico), compara contra V1 e V2
-  explorer.py               Dashboard local (Streamlit) pra explorar os clusters V1/V2/V3 interativamente
-  set_assistant.py          Chat de terminal (Ollama local + DuckDuckGo) que sugere faixas a partir de contexto de evento
-reports/               Saída visual do clustering (PCA 2D por versão)
+  cluster_v2.py             Clustering k-means espaço 'meta_audio', compara contra V1 (Adjusted Rand Index)
+  cluster_v3.py             Clustering k-means espaço 'audio' (diagnóstico), compara contra V1 e V2
+  similarity.py             Busca k-NN (similar_tracks) nos 3 espaços, com filtros duros de BPM/Camelot
+  verify_baseline.py        Recomputa e verifica (só leitura) os números do baseline V1/V2/V3 + ingestão
+  audit_clustering.py       Etapa 1: varredura de k, silhouette por cluster, PCA loadings, ARI, H1-H3
+  eval_similarity.py        Etapa 3: avalia o k-NN via precision@10 por co-ocorrência em playlist
+  explorer.py               Dashboard local (Streamlit), seletor "Clusters" / "Vizinhos" (k-NN + UMAP) no menu lateral
+  set_assistant.py          Chat de terminal (Ollama local + DuckDuckGo), tools query_library/similar_tracks/web_search
+reports/               Saída visual do clustering (PCA 2D por versão, baseline)
+results/               Métricas/artefatos versionados por etapa (baseline_2026-09/, etapa1_2026-09/, etapa3_2026-09/, etapa5_2026-09/)
 docker-compose.yml     Postgres local para desenvolvimento
-requirements.txt       Dependências Python (pandas, scikit-learn, librosa, ollama, ddgs, streamlit, plotly, ...)
+requirements.txt       Dependências Python (pandas, scikit-learn, librosa, ollama, ddgs, streamlit, plotly, umap-learn, ...)
+CHANGELOG.md           Histórico de mudanças por etapa, com números e arquivos de resultado
 ```
 
 ### O que cada query em `sql/queries/` faz
@@ -140,6 +153,73 @@ Chat que, dado um contexto de evento em texto livre, busca primeiro na base cata
 5. **1 faixa (`track_id=210208753`) tem o arquivo referenciado pelo Rekordbox ausente em disco.** Vale uma checagem periódica de integridade Rekordbox↔arquivos, fora do escopo atual.
 6. **Parser de nome de arquivo (regra `KEY - BPM - Artista - Título`) mencionado no `docs/spec.md` não foi implementado nesta rodada** — a ingestão foi direto dos exports Rekordbox, que já trazem `Name`, key e BPM estruturados; o parser continua útil só como fallback pra faixas ainda não catalogadas no Rekordbox.
 7. **Implicação prática do achado do V3 pra próxima fase (classificação assistida)**: como V2 ≈ V3, o sinal de similaridade sonora vem quase todo do áudio — a fase de classificação pode se apoiar no cluster V3 (ou V2, equivalentes) como proxy de "soa parecido", em vez de tentar melhorar o encoding de metadado do V1 pra esse fim. Metadado continua útil pra filtro/negócio (gênero, MyTag, rating), só não pra medir semelhança sonora.
+8. ✅ **Resolvido** (fase "3 espaços + k-NN", ver seção dedicada abaixo): substituiu clustering puro por k-NN como mecanismo principal de recomendação, com avaliação quantitativa real (precision@10) em vez de só métricas internas de cluster.
+9. **Próximos passos mapeados, não implementados** (Etapa 6 da fase "3 espaços + k-NN", registrado aqui por decisão explícita de escopo): grafo de vizinhança (`pyvis` ou `streamlit-agraph`) visualizando as arestas k-NN da biblioteca inteira, e uma rota de transição A→B por caminho mínimo nesse grafo (série de faixas que conecta duas faixas específicas passo a passo, cada uma parecida com a próxima) — útil pra planejar a transição entre dois momentos de um set. Também em aberto: erro de síntese do assistente sobre resultado de tool ambíguo (ver "Assistente de set via LLM" acima) e testar um modelo local maior ou tier gratuito de nuvem pra confiabilidade de tool-calling encadeado (item 4).
+
+## 3 espaços de features + k-NN (2026-09)
+
+Fase adicionada após o baseline V1/V2/V3, motivada pelo achado #2 acima (silhouette de k-means baixo em espaços com áudio, sinal de que a similaridade sonora é contínua, não organizada em blocos discretos). Substitui clustering puro por busca de vizinhos mais próximos (k-NN) como mecanismo principal de recomendação — os clusters continuam existindo, como visualização e filtro de "mood". Racional completo, alternativas consideradas e consequências em `docs/decisions/ADR-001-tres-espacos-e-knn.md`. Baseline anterior preservado intacto na tag git `baseline-v1-v2` e em `results/baseline_2026-09/` — nada das seções acima foi sobrescrito por esta fase.
+
+### Correspondência de nomes
+
+Os apelidos V1/V2/V3 usados nas seções acima continuam válidos; a partir desta fase, os mesmos três espaços de features também são chamados por um nome mais descritivo, usado no código (`src/features.py`, `src/similarity.py`) e nos resultados novos:
+
+| Apelido histórico | Espaço (nome de código, a partir desta fase) | Conteúdo |
+|---|---|---|
+| V1 | `meta` | BPM, rating, gênero, MyTag (one-hot) — 83 features |
+| V2 | `meta_audio` | `meta` + features de áudio padronizadas — 111 features |
+| V3 | `audio` | só features de áudio padronizadas — 28 features |
+
+### Histórico de decisões
+
+1. **Dataset público (Kaggle) → biblioteca real do Rekordbox** — commit `d88b06f`. Ver `docs/spec.md`, "Contexto e Motivação".
+2. **Claude API / Tavily (citados como exemplo no plano original) → Ollama local + DuckDuckGo**, 100% gratuito — Fase 4, commit `7eeb692`. Ver seção "Assistente de set via LLM" acima.
+3. **[ADR-001](docs/decisions/ADR-001-tres-espacos-e-knn.md)** — manter os 3 espaços de features e adicionar k-NN como mecanismo principal de recomendação, em vez de só k-means. Commit `ec9f77c` em diante (tag `baseline-v1-v2` marca o estado imediatamente anterior).
+
+### O que foi feito, etapa por etapa
+
+| Etapa | O que entrega | Artefatos |
+|---|---|---|
+| 0 — Preservar histórico | Tag git + métricas do baseline recomputadas e verificadas (21/21 batem com o README) | `results/baseline_2026-09/` |
+| 1 — Auditoria de clustering | Varredura de k=2–20 por espaço, silhouette por cluster, loadings de PCA, matriz de ARI completa, H1–H3 | `results/etapa1_2026-09/` |
+| 2 — Busca k-NN | `src/similarity.py` (`NearestNeighbors` exato), `src/camelot.py` (módulo compartilhado) | `src/similarity.py`, `src/camelot.py` |
+| 3 — Avaliação do k-NN | precision@10 por co-ocorrência em playlist, 3 espaços × 2 métricas × ablação de chroma, vs. 2 baselines | `results/etapa3_2026-09/` |
+| 4 — Visualização | Aba "Vizinhos" no `explorer.py`: UMAP/PCA, faixa de referência destacada, tabela de deltas, comparação de perfil | `src/explorer.py` |
+| 5 — Tool no assistente | `similar_tracks` exposta em `set_assistant.py`, testada com 3 pedidos reais | `results/etapa5_2026-09/assistant_tests.md` |
+
+### Tabela de resultados
+
+Formato: métrica \| espaço \| valor \| run \| arquivo \| script gerador. Linhas do baseline preservadas (não recalculadas nem sobrescritas) ao lado das novas desta fase.
+
+| Métrica | Espaço | Valor | Run | Arquivo | Script gerador |
+|---|---|---|---|---|---|
+| silhouette (k, sweep 4–15) | `meta` | 0.368 (k=4) | baseline 2026-09 | `results/baseline_2026-09/metrics.json` | `cluster_v1.py` |
+| silhouette (k, sweep 4–15) | `meta_audio` | 0.072 (k=4) | baseline 2026-09 | `results/baseline_2026-09/metrics.json` | `cluster_v2.py` |
+| silhouette (k, sweep 4–15) | `audio` | 0.080 (k=4) | baseline 2026-09 | `results/baseline_2026-09/metrics.json` | `cluster_v3.py` |
+| ARI | `meta` × `meta_audio` | 0.019 | baseline 2026-09 | `results/baseline_2026-09/metrics.json` | `cluster_v2.py` |
+| ARI | `audio` × `meta_audio` | 0.909 | baseline 2026-09 | `results/baseline_2026-09/metrics.json` | `cluster_v3.py` |
+| ARI | `audio` × `meta` | 0.009 | baseline 2026-09 | `results/baseline_2026-09/metrics.json` | `cluster_v3.py` |
+| silhouette (k, sweep 2–20) | `meta` | 0.3676 (k=4, igual ao baseline) | etapa1_2026-09 | `results/etapa1_2026-09/summary.json` | `audit_clustering.py` |
+| silhouette (k, sweep 2–20) | `meta_audio` | 0.1656 (k=2, diferente do baseline) | etapa1_2026-09 | `results/etapa1_2026-09/summary.json` | `audit_clustering.py` |
+| silhouette (k, sweep 2–20) | `audio` | 0.1867 (k=2, diferente do baseline) | etapa1_2026-09 | `results/etapa1_2026-09/summary.json` | `audit_clustering.py` |
+| ARI | `meta_k4` × `v1_structured` (baseline) | 1.0000 (idêntico — regression check do refactor) | etapa1_2026-09 | `results/etapa1_2026-09/ari_matrix_all.csv` | `audit_clustering.py` |
+| ARI | `meta_audio_k2` × `audio_k2` | 0.9903 | etapa1_2026-09 | `results/etapa1_2026-09/ari_matrix_all.csv` | `audit_clustering.py` |
+| H1 (k=2 é o melhor em `meta`?) | `meta` | refutada (melhor k=4) | etapa1_2026-09 | `results/etapa1_2026-09/hypotheses.json` | `audit_clustering.py` |
+| H2 (PC1 de `meta` dominado por rating/MyTag?) | `meta` | confirmada (6/8 do top-8) | etapa1_2026-09 | `results/etapa1_2026-09/hypotheses.json` | `audit_clustering.py` |
+| H3 (treinar só nas 333 c/ tag muda os clusters?) | `meta` | confirmada (ARI=0.0748) | etapa1_2026-09 | `results/etapa1_2026-09/hypotheses.json` | `audit_clustering.py` |
+| precision@10 (cosine) | `meta` | **0.7041** | etapa3_2026-09 | `results/etapa3_2026-09/knn_eval.csv` | `eval_similarity.py` |
+| precision@10 (cosine, c/ chroma) | `meta_audio` | 0.4166 | etapa3_2026-09 | `results/etapa3_2026-09/knn_eval.csv` | `eval_similarity.py` |
+| precision@10 (cosine, s/ chroma) | `meta_audio` | 0.4602 | etapa3_2026-09 | `results/etapa3_2026-09/knn_eval.csv` | `eval_similarity.py` |
+| precision@10 (cosine, c/ chroma) | `audio` | 0.3389 | etapa3_2026-09 | `results/etapa3_2026-09/knn_eval.csv` | `eval_similarity.py` |
+| precision@10, baseline aleatório | todos | ~0.219–0.221 | etapa3_2026-09 | `results/etapa3_2026-09/knn_eval.csv` | `eval_similarity.py` |
+| precision@10, baseline BPM+Camelot aleatório | todos | ~0.304–0.305 | etapa3_2026-09 | `results/etapa3_2026-09/knn_eval.csv` | `eval_similarity.py` |
+| faixas avaliadas (≥1 playlist) | — | 832 de 1649 (50,5%) | etapa3_2026-09 | `results/etapa3_2026-09/summary.json` | `eval_similarity.py` |
+
+Grade completa (10 configurações: 3 espaços × 2 métricas × ablação de chroma) em `results/etapa3_2026-09/knn_eval.csv`; leitura interpretativa completa em `results/etapa3_2026-09/README.md`.
+
+### Achado principal desta fase
+
+O k-NN confirma e aprofunda o achado do V3: **a similaridade sonora real é contínua** (silhouette baixo em `meta_audio`/`audio` mesmo variando k de 2 a 20 — nenhum k "resolve" isso), então k-NN (que não assume blocos discretos) é mais adequado que k-means como mecanismo de recomendação. Na avaliação por precision@10, `meta` vence por larga margem (0.70) — mas isso é o **viés esperado e documentado**, não qualidade superior: as playlists desta biblioteca são majoritariamente organizadas por gênero, que `meta` inclui como feature direta. `audio` (0.32–0.34) tem a menor precision@10 mas ainda bate os dois baselines em toda configuração — o ranking por similaridade agrega valor real, mesmo no espaço sem essa vantagem estrutural.
 
 ## Reprodutibilidade e privacidade
 
@@ -176,17 +256,25 @@ python src/extract_audio_features.py    # extração de áudio via librosa (~2s/
 python src/cluster_v2.py                # clustering V2 (metadados + áudio), compara com V1
 python src/cluster_v3.py                # clustering V3 (só áudio, diagnóstico), compara com V1 e V2
 
-streamlit run src/explorer.py           # dashboard interativo -- abre em http://localhost:8501
+streamlit run src/explorer.py           # dashboard interativo -- abre em http://localhost:8501, seletor Clusters/Vizinhos no menu lateral
 
 ollama pull llama3.1:8b                 # uma vez só, baixa o modelo (~5GB)
-python src/set_assistant.py             # chat de terminal
+python src/set_assistant.py             # chat de terminal (query_library + similar_tracks + web_search)
+```
+
+### Fase "3 espaços de features + k-NN" (opcional, roda em cima dos dados acima)
+```bash
+python src/verify_baseline.py           # recomputa e verifica os números do baseline (só leitura, não escreve no banco)
+python src/audit_clustering.py          # Etapa 1: varredura de k, PCA, ARI 3x3, H1-H3 -- persiste versões NOVAS em track_clusters
+python src/eval_similarity.py           # Etapa 3: precision@10 do k-NN vs. baselines -- só leitura, não escreve no banco
 ```
 
 ### Como interromper com segurança
 - **`set_assistant.py`**: digite `sair` (ou `exit`/`quit`), `Ctrl+D` ou `Ctrl+C` — não há estado persistido nesse chat, interromper a qualquer momento é seguro.
 - **`streamlit run src/explorer.py`**: `Ctrl+C` no terminal onde está rodando (ou `pkill -f "streamlit run src/explorer.py"` se subiu em background). A tela só lê dados já persistidos no banco, nunca escreve — zero risco de corromper estado.
 - **`extract_audio_features.py`**: seguro interromper a qualquer momento (`Ctrl+C`) — é o único script que grava uma faixa por vez em vez de em lote, propositalmente (ver docstring do arquivo), então o progresso feito fica salvo; rodar de novo pula as faixas já processadas.
-- **`cluster_v1.py` / `cluster_v2.py` / `cluster_v3.py`**: idempotentes — `persist_clusters` (`clustering_common.py`) faz `DELETE` do `cluster_version` correspondente antes de inserir, então interromper e rodar de novo é seguro, sem duplicata.
+- **`cluster_v1.py` / `cluster_v2.py` / `cluster_v3.py` / `audit_clustering.py`**: idempotentes — `persist_clusters` (`clustering_common.py`) faz `DELETE` do `cluster_version` correspondente antes de inserir, então interromper e rodar de novo é seguro, sem duplicata (e nunca toca em `v1_structured`/`v2_audio`/`v3_audio_only`, que são versões diferentes).
+- **`verify_baseline.py` / `eval_similarity.py`**: só leitura, nunca escrevem no banco — seguro interromper a qualquer momento.
 - **`ingest.py`: NÃO é idempotente** — insere com `to_sql(if_exists="append")`, sem limpar as tabelas antes. Interromper no meio, ou rodar duas vezes sobre um banco já populado, falha com erro de chave duplicada (`track_id`/`playlist_name`/`value_name` são `UNIQUE`/`PK`) em vez de duplicar silenciosamente — falha alto, que é a propriedade de segurança que importa aqui (nenhuma tabela fica com dado incoerente sem avisar). Pra rodar de novo do zero: dropa as tabelas afetadas e reaplica o schema antes de rodar `ingest.py` de novo:
   ```bash
   docker compose exec -T postgres psql -U beat_insights -d beat_insights -c \
@@ -205,7 +293,8 @@ python src/set_assistant.py             # chat de terminal
 3. ✅ **Clusterização e visualização** — V1 estruturada, V2 com áudio, V3 só-áudio (diagnóstico), comparação entre as três (ver "Resultados obtidos").
 3.5. ✅ **Explorador interativo de clusters** — dashboard local (`streamlit run src/explorer.py`), ponte antes de definir regras de classificação de faixas.
 4. ✅ **Assistente de set via LLM** — busca na base local primeiro (`query_library` + `similar_tracks`, k-NN), busca externa como complemento, 100% local/gratuito.
-5. ⏳ **Classificação assistida de faixas** — próxima fase, ainda não iniciada. Deve se apoiar nos achados das conclusões acima (cobertura de MyTag como prioridade, cluster V2/V3 — equivalentes, ARI 0.909 — como referência de similaridade sonora).
+5. ✅ **3 espaços de features + k-NN** (fase adicionada após o baseline, ver seção dedicada acima) — auditoria de clustering, busca k-NN, avaliação por precision@10, aba "Vizinhos" no explorer, tool no assistente. Etapa 6 (grafo de vizinhança + rota de transição) mapeada, não implementada (ver "Conclusões", item 9).
+6. ⏳ **Classificação assistida de faixas** — próxima fase, ainda não iniciada. Deve se apoiar nos achados das conclusões acima (cobertura de MyTag como prioridade, espaços `meta_audio`/`audio` — equivalentes, ARI 0.909/0.9903 — como referência de similaridade sonora, k-NN em vez de clustering puro).
 
 ---
 *Documento atualizado a partir dos resultados reais de cada fase, rodada contra a biblioteca Rekordbox do autor — não é mais só a especificação, é o que de fato aconteceu ao rodar o projeto.*

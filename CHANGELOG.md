@@ -112,6 +112,13 @@ Ver `docs/decisions/ADR-001-tres-espacos-e-knn.md` pro contexto completo da deci
   quando o filtro de BPM+Camelot é mais restritivo), alternância UMAP/PCA com
   o aviso aparecendo, tabela de deltas com valores reais (não `n/a`) em
   espaços com áudio, gráfico de comparação atualizando por vizinho selecionado.
+- **Fix de UX (commit `5ee7f75`, posterior)**: `st.tabs()` trocado por
+  `st.sidebar.radio("Visualização", ...)` — os filtros de cada view (Clusters/
+  Vizinhos) viviam só no sidebar, então antes apareciam misturados
+  independente da aba ativa (`st.sidebar.*` não é escopado por `with tab:`
+  no Streamlit). Agora cada view só mostra os próprios controles. Adicionado
+  também campo de busca por nome pra filtrar a faixa de referência (1649
+  faixas num único `selectbox` sem busca era ruim de navegar).
 
 ### Etapa 5 — Tool `similar_tracks` no assistente LLM (2026-09-22)
 - `src/set_assistant.py`: nova tool `similar_tracks` (busca por nome de faixa via
