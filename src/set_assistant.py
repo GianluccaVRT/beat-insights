@@ -40,6 +40,7 @@ import ollama
 from ddgs import DDGS
 from sqlalchemy import text
 
+import camelot
 from clustering_common import get_engine
 
 MODEL = "llama3.1:8b"
@@ -121,27 +122,6 @@ WEB_SEARCH_TOOL = {
 }
 
 
-_CAMELOT_RE = re.compile(r"^(1[0-2]|[1-9])[AB]$", re.IGNORECASE)
-
-
-def _compatible_camelot_keys(key_camelot: str) -> list[str]:
-    # Modelos menores (Ollama) às vezes mandam um valor que não é uma key Camelot
-    # real (ex.: ecoam a palavra "relativa" da descrição do parâmetro). Validar
-    # aqui devolve um erro claro no tool_result em vez de deixar um ValueError do
-    # int() vazar como mensagem de erro genérica pro modelo.
-    if not _CAMELOT_RE.match(key_camelot):
-        raise ValueError(f"key_camelot inválida: {key_camelot!r} -- use o formato Camelot, ex.: '8A'.")
-    num = int(key_camelot[:-1])
-    letter = key_camelot[-1].upper()
-    other = "B" if letter == "A" else "A"
-    return [
-        f"{num}{letter}",
-        f"{(num % 12) + 1}{letter}",
-        f"{((num + 10) % 12) + 1}{letter}",
-        f"{num}{other}",
-    ]
-
-
 def _clean(value):
     """Normaliza placeholders que o modelo local manda no lugar de "campo omitido"
     (string "None"/"null"/vazia) para None de verdade."""
@@ -178,7 +158,7 @@ def query_library(engine, **filters) -> dict:
 
     key_camelot = filters.get("key_camelot")
     if key_camelot:
-        keys = _compatible_camelot_keys(key_camelot)
+        keys = camelot.compatible_keys(key_camelot)
         placeholders = ", ".join(f":key{i}" for i in range(len(keys)))
         where.append(f"t.key_camelot IN ({placeholders})")
         params.update({f"key{i}": k for i, k in enumerate(keys)})

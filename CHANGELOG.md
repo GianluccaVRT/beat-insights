@@ -47,6 +47,24 @@ Ver `docs/decisions/ADR-001-tres-espacos-e-knn.md` pro contexto completo da deci
   (PC1 de `meta` dominado por rating/MyTag), H3 confirmada (treinar `meta` só
   nas 333 faixas com tag muda substancialmente os clusters, ARI=0.0748).
 
+### Etapa 2 — Busca k-NN, `src/similarity.py` (2026-09-22)
+- `src/camelot.py`: roda de Camelot extraída de `set_assistant.py` pra módulo
+  compartilhado (regra "não duplicar lógica") — `compatible_keys(key_camelot)`,
+  mesma implementação/regex de antes. `set_assistant.py` atualizado pra
+  importar daqui; comportamento idêntico, testado.
+- `src/similarity.py`: `similar_tracks(engine, track_id, space, k=10,
+  metric="cosine", bpm_tol=3, camelot=True, candidate_pool=200)` —
+  `sklearn.neighbors.NearestNeighbors` (busca exata, `algorithm="brute"`).
+  BPM e key Camelot são filtros duros aplicados **depois** da busca, sobre um
+  pool de 200 candidatos — nunca entram na distância. Saída: track_id, nome,
+  artista, similaridade, BPM, key, Δ spectral centroid e Δ RMS em relação à
+  faixa de referência (None em `meta`, que não tem dado de áudio).
+- Testado nos 3 espaços, com/sem filtros, métrica cosseno e euclidiana, espaço
+  inválido e faixa sem áudio (mensagens de erro claras nos dois últimos casos).
+- Limitação do espaço `meta` confirmada empiricamente (não só teórica): faixa
+  sem MyTag testada teve só 7 valores de similaridade únicos entre os 10
+  vizinhos mais próximos — empate real, como documentado no módulo.
+
 ## [Baseline 2026-09] — Fases 1–4 do projeto (2026-08-18 a 2026-09-22)
 
 Estado congelado pela tag `baseline-v1-v2`. Resumo (números completos e fontes em
