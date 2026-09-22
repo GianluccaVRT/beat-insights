@@ -9,3 +9,4 @@ ollama
 ddgs
 streamlit
 plotly
+umap-learn

@@ -87,6 +87,32 @@ Ver `docs/decisions/ADR-001-tres-espacos-e-knn.md` pro contexto completo da deci
   efeito pequeno e inconsistente entre métricas em `audio` puro —
   inconclusivo, não usado pra decidir remover chroma.
 
+### Etapa 4 — Aba "Vizinhos" no explorer.py, com UMAP (2026-09-22)
+- `src/explorer.py` reestruturado em duas abas (`st.tabs`): "Clusters" (conteúdo
+  existente, sem mudança de comportamento) e "Vizinhos" (nova).
+- Aba "Vizinhos": seletor de espaço (`meta`/`meta_audio`/`audio`), faixa de
+  referência, k, métrica, tolerância de BPM (liga/desliga), filtro Camelot
+  (liga/desliga) e projeção de fundo (UMAP padrão / PCA). Chama
+  `similarity.similar_tracks` diretamente — mesma função usada pelo assistente
+  de LLM (Etapa 5), sem duplicar lógica de busca.
+- Projeção UMAP (`umap-learn`, `random_state=42`, `n_jobs=1`) em cache por
+  espaço, junto com PCA 2D pra comparação; nota na interface avisando que PCA
+  não preserva vizinhança local quando selecionado.
+- Scatter: resto da biblioteca em cinza claro, linhas da faixa de referência
+  até cada vizinho (hover mostra a similaridade), vizinhos em cor forte,
+  referência destacada (estrela, maior, contorno escuro).
+- Tabela de vizinhos com Δ brilho (spectral centroid) e Δ energia (RMS) com
+  seta de direção (↑/↓); "n/a" no espaço `meta`, que não tem dado de áudio.
+- Gráfico de comparação de perfil (referência vs. vizinho escolhido): valores
+  z-score (desvio-padrão da média da biblioteca nesse espaço) — eixo único e
+  comparável entre dimensões de escalas muito diferentes (BPM em dezenas,
+  spectral centroid em milhares), em vez de misturar unidades num só gráfico.
+- Testado no navegador (Chrome via automação): troca de aba, troca de espaço
+  (`meta`→`audio`, recalcula UMAP e volta a mostrar menos de 10 vizinhos
+  quando o filtro de BPM+Camelot é mais restritivo), alternância UMAP/PCA com
+  o aviso aparecendo, tabela de deltas com valores reais (não `n/a`) em
+  espaços com áudio, gráfico de comparação atualizando por vizinho selecionado.
+
 ## [Baseline 2026-09] — Fases 1–4 do projeto (2026-08-18 a 2026-09-22)
 
 Estado congelado pela tag `baseline-v1-v2`. Resumo (números completos e fontes em
