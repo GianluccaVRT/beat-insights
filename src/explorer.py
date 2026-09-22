@@ -32,6 +32,7 @@ from sqlalchemy import text
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import cluster_v1  # noqa: E402
 import cluster_v2  # noqa: E402
+import cluster_v3  # noqa: E402
 from clustering_common import get_engine  # noqa: E402
 
 # Paleta categórica validada (skill dataviz/references/palette.md), ordem fixa --
@@ -102,6 +103,30 @@ def load_v2():
     return df.reset_index()
 
 
+@st.cache_data(show_spinner="Montando espaço de features V3 (só áudio)...")
+def load_v3():
+    engine = get_engine()
+    tracks, mytag_long, mytag_by_track = load_base()
+    audio = cluster_v2.load_audio_features(engine)
+    features = cluster_v3.build_features(audio)
+    labels = pd.read_sql(
+        text("SELECT track_id, cluster_label FROM track_clusters WHERE cluster_version = 'v3_audio_only'"), engine
+    ).set_index("track_id")["cluster_label"]
+
+    # tracks não usa as colunas de áudio como feature aqui (V3 é só-áudio), mas
+    # continuam disponíveis pra exibir/filtrar (bpm, rating, gênero, mytag).
+    df = tracks.set_index("track_id").loc[features.index].copy()
+    df["cluster"] = labels.loc[features.index]
+    coords = PCA(n_components=3, random_state=42).fit_transform(features)
+    df["pca_1"], df["pca_2"], df["pca_3"] = coords[:, 0], coords[:, 1], coords[:, 2]
+
+    audio_indexed = audio.set_index("track_id").loc[features.index]
+    for col in ["tempo_detected", "spectral_centroid_mean", "rms_energy_mean"]:
+        df[col] = audio_indexed[col]
+    df["mytags"] = df.index.map(lambda tid: ", ".join(mytag_by_track.get(tid, [])) or "—")
+    return df.reset_index()
+
+
 st.title("Explorador de Clusters")
 st.caption(
     "Fase 3.5 — visualização interativa dos modelos de clustering antes de definir regras de "
@@ -109,8 +134,12 @@ st.caption(
     "(Fase 3), não recalculados nesta tela."
 )
 
-version = st.sidebar.radio("Versão do modelo", ["V1 — metadados estruturados", "V2 — metadados + áudio"])
-df = load_v1() if version.startswith("V1") else load_v2()
+version = st.sidebar.radio(
+    "Versão do modelo",
+    ["V1 — metadados estruturados", "V2 — metadados + áudio", "V3 — só áudio (diagnóstico)"],
+)
+loaders = {"V1": load_v1, "V2": load_v2, "V3": load_v3}
+df = loaders[version[:2]]()
 
 if version.startswith("V1"):
     st.info(
@@ -119,11 +148,20 @@ if version.startswith("V1"):
         "do que por semelhança sonora — ver README, seção \"Resultados obtidos\".",
         icon="ℹ️",
     )
-else:
+elif version.startswith("V2"):
     st.info(
         "**V2**: metadados + features de áudio via `librosa` (tempo, spectral centroid, RMS, MFCCs, "
         "chroma). k=4, mas silhouette caiu para 0.072 e o Adjusted Rand Index contra o V1 é 0.019 — "
         "os dois modelos discordam quase totalmente sobre o que é \"parecido\". Ver README.",
+        icon="ℹ️",
+    )
+else:
+    st.info(
+        "**V3**: k-means só com features de áudio (sem BPM/rating/gênero/MyTag na matriz) — "
+        "diagnóstico pra isolar o sinal de áudio puro. k=4, silhouette 0.080. Achado: o Adjusted "
+        "Rand Index contra o **V2 é 0.909** (quase idêntico) e contra o **V1 é 0.009** (quase "
+        "aleatório) — o áudio domina quase totalmente o resultado do V2, o metadado contribui "
+        "pouco. Ver README.",
         icon="ℹ️",
     )
 
@@ -135,7 +173,7 @@ axis_options = {
     "Rating": "rating",
     "Play Count": "play_count",
 }
-if version.startswith("V2"):
+if not version.startswith("V1"):
     axis_options.update(
         {
             "Tempo detectado (áudio)": "tempo_detected",

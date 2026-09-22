@@ -26,7 +26,7 @@ O XML de `Collection` pode conter entradas que não são faixas de set — na bi
 - **MyTag não tem informação de grupo/categoria em nenhum export do Rekordbox** — apenas uma lista plana de valores por faixa, sem indicar a qual grupo cada valor pertence. Isso é uma limitação do produto, não do processo de extração.
 - **Cobertura de MyTag é baixa: só 333 das 1649 faixas (20%) têm pelo menos uma tag.** Isso limita diretamente a qualidade do clustering V1 (ver "Resultados obtidos").
 - **Sem análise temporal de play count.** O Rekordbox expõe `PlayCount` como um contador acumulado, sem timestamp por reprodução — não há como derivar "estilos mais tocados ao longo do tempo" com os dados disponíveis. `PlayCount` é usado como sinal estático (ex: para priorizar quais faixas revisar primeiro), não como série temporal.
-- **1 faixa da Collection não tem arquivo de áudio localizável em disco** (`7A - 122 - GUIGO TESSEROLI - Caminho.mp3` — só sobrou a versão `.wav` gêmea). Fica de fora da extração de features de áudio (V2) e do clustering V2.
+- **1 faixa da Collection não tem arquivo de áudio localizável em disco** (`7A - 122 - GUIGO TESSEROLI - Caminho.mp3` — só sobrou a versão `.wav` gêmea). Fica de fora da extração de features de áudio e dos clusterings V2/V3.
 
 ## Estrutura do projeto
 
@@ -34,7 +34,7 @@ O XML de `Collection` pode conter entradas que não são faixas de set — na bi
 data/raw/            Exports do Rekordbox (Export_Playlists.xml, Playlists.txt) -- gitignored, dados pessoais
 sql/schema/           DDL, aplicado em ordem
   001_create_tables.sql   tracks, playlists, track_playlist, mytag_values, track_mytag
-  002_clustering.sql      track_clusters (labels de k-means, por versão: v1_structured / v2_audio)
+  002_clustering.sql      track_clusters (labels de k-means, por versão: v1_structured / v2_audio / v3_audio_only)
   003_audio_features.sql  audio_features (tempo/spectral/RMS/MFCCs/chroma extraídos via librosa)
 sql/queries/          Queries analíticas prontas (ver "O que cada query faz" abaixo)
 src/
@@ -43,7 +43,8 @@ src/
   cluster_v1.py             Clustering k-means só com metadados estruturados (BPM, rating, gênero, MyTag one-hot)
   extract_audio_features.py Extração de features de áudio via librosa, faixa a faixa, incremental/resumível
   cluster_v2.py             Clustering k-means com metadados + áudio, compara contra V1 (Adjusted Rand Index)
-  explorer.py               Dashboard local (Streamlit) pra explorar os clusters V1/V2 interativamente
+  cluster_v3.py             Clustering k-means só com áudio (diagnóstico), compara contra V1 e V2
+  explorer.py               Dashboard local (Streamlit) pra explorar os clusters V1/V2/V3 interativamente
   set_assistant.py          Chat de terminal (Ollama local + DuckDuckGo) que sugere faixas a partir de contexto de evento
 reports/               Saída visual do clustering (PCA 2D por versão)
 docker-compose.yml     Postgres local para desenvolvimento
@@ -76,9 +77,9 @@ Combina os dois exports do Rekordbox num schema relacional único.
 - `rating` do XML vem codificado (0/51/102/153/204/255) — decodificado via `rating_xml // 51`, validado contra o TXT.
 - Estado final no banco: **1649 tracks, 13 playlists, 1134 vínculos track↔playlist, 44 valores únicos de MyTag, 1617 vínculos track↔tag (333 faixas com pelo menos 1 tag)**.
 
-### 2. Clusterização (`cluster_v1.py`, `extract_audio_features.py`, `cluster_v2.py`)
+### 2. Clusterização (`cluster_v1.py`, `extract_audio_features.py`, `cluster_v2.py`, `cluster_v3.py`)
 
-Agrupamento não supervisionado (k-means, k escolhido por silhouette score) em duas etapas, com a comparação entre elas reportada como parte da análise.
+Agrupamento não supervisionado (k-means, k escolhido por silhouette score) em três versões, com a comparação entre elas reportada como parte da análise.
 
 **V1 — só metadados estruturados** (BPM, rating, gênero, MyTag via one-hot, 83 features):
 - k=4 escolhido (silhouette 0.368, bem acima dos demais k testados).
@@ -94,18 +95,23 @@ Agrupamento não supervisionado (k-means, k escolhido por silhouette score) em d
 - **Adjusted Rand Index entre V1 e V2 = 0.019** — praticamente zero, os dois modelos discordam quase totalmente sobre o que é "parecido".
 - **Conclusão**: isso confirma a hipótese do `docs/spec.md` de que metadado categórico sozinho não captura similaridade sonora real — o áudio introduz uma noção de semelhança tímbrica contínua e bem menos separável em blocos nítidos que a estrutura esparsa do one-hot do V1. Não é "o V2 deu errado"; é evidência de que o V1 media principalmente completude de metadado, não som.
 
-Visualizações estáticas em `reports/cluster_v1_pca.png` e `reports/cluster_v2_pca.png` (projeção PCA 2D) — ver também o explorador interativo abaixo.
+**V3 — só áudio, diagnóstico** (28 features: tempo, spectral centroid, RMS, 13 MFCCs, 12 chroma; sem BPM/rating/gênero/MyTag na matriz):
+- k=4, silhouette 0.080 (na mesma faixa baixa do V2).
+- **Adjusted Rand Index V3 × V2 = 0.909** (quase idêntico) e **V3 × V1 = 0.009** (quase aleatório).
+- **Conclusão, respondendo à pergunta que o V3 foi criado pra responder**: o áudio sozinho já produz praticamente o mesmo agrupamento que metadados+áudio (V2) — o metadado contribui muito pouco pro resultado do V2 quando o áudio está presente. Em outras palavras, a similaridade "descoberta" pelo V2 é essencialmente similaridade de áudio; o V1 mede outra coisa inteiramente (completude de metadado), daí o ARI V1×V2 ≈ 0 já visto antes bater com V1×V3 ≈ 0 também.
+
+Visualizações estáticas em `reports/cluster_v1_pca.png`, `reports/cluster_v2_pca.png` e `reports/cluster_v3_pca.png` (projeção PCA 2D) — ver também o explorador interativo abaixo (agora com V1/V2/V3).
 
 ### 3. Explorador interativo de clusters (`src/explorer.py`)
 
-Antes de definir regras de classificação de faixas (próxima fase), dá pra olhar onde as faixas caem hoje nos dois modelos e questionar visualmente se os clusters fazem sentido musical, em vez de decidir só pelos números agregados. Dashboard local via Streamlit:
+Antes de definir regras de classificação de faixas (próxima fase), dá pra olhar onde as faixas caem hoje nos três modelos e questionar visualmente se os clusters fazem sentido musical, em vez de decidir só pelos números agregados. Dashboard local via Streamlit:
 
 ```
 streamlit run src/explorer.py
 ```
 
-- Alterna entre os modelos V1 (metadados) e V2 (metadados + áudio) já persistidos em `track_clusters` — recalcula só a projeção PCA (agora em 3D) pra plotar, não o clustering em si.
-- Gráfico **3D** (`Scatter3d`, PCA com 3 componentes) com rotação/zoom interativos — eixos configuráveis: PCA 1/2/3, BPM, rating, play count, e (no V2) tempo detectado/spectral centroid/RMS energy.
+- Alterna entre os modelos V1 (metadados), V2 (metadados + áudio) e V3 (só áudio) já persistidos em `track_clusters` — recalcula só a projeção PCA (em 3D) pra plotar, não o clustering em si.
+- Gráfico **3D** (`Scatter3d`, PCA com 3 componentes) com rotação/zoom interativos — eixos configuráveis: PCA 1/2/3, BPM, rating, play count, e (no V2/V3) tempo detectado/spectral centroid/RMS energy.
 - Filtros: gênero, MyTag, busca por artista/faixa, faixa de BPM, faixa de rating.
 - Cada ponto no gráfico tem tooltip com nome, artista, gênero, key, BPM, rating, play count e MyTag; tabela de perfil por cluster e tabela completa das faixas filtradas abaixo do gráfico.
 - Paleta e codificação seguem o método do skill `dataviz` interno: cor categórica em ordem fixa (nunca ciclada) + símbolo por cluster como codificação secundária — testado com `scripts/validate_palette.js` do skill, que aponta que cor sozinha não é suficiente pra distinguir 4 clusters simultâneos num scatter (all-pairs); tabela em `st.dataframe` como visão alternativa sem depender de cor. `Scatter3d` do Plotly aceita um conjunto de símbolos bem menor que o `Scatter` 2D (sem `triangle-up`/`star`/etc.) — lista de símbolos própria pra 3D, mesma ordem fixa.
@@ -124,11 +130,12 @@ Chat que, dado um contexto de evento em texto livre, busca primeiro na base cata
 ## Conclusões e próximos passos de melhoria
 
 1. **A cobertura de MyTag (20%) é o maior gargalo de qualidade do clustering hoje.** Antes de investir mais em algoritmo, o maior ganho provável é classificar mais faixas — `sql/queries/01_faixas_sem_classificacao.sql` já prioriza isso por play_count (faixas tocadas e nunca avaliadas primeiro).
-2. **V1 mede completude de metadado mais do que som.** Se o objetivo é usar clustering pra "achar faixas parecidas", o V2 (áudio) é a versão que deveria orientar essa decisão, não o V1 — vale considerar uma V3 só-áudio (sem metadados) como diagnóstico, pra isolar se o sinal de áudio sozinho forma clusters mais nítidos sem a diluição do one-hot esparso.
+2. ✅ **Resolvido**: V1 mede completude de metadado mais do que som. O diagnóstico V3 (só áudio, sem metadados) confirmou: ARI V3×V2 = 0.909 (quase idêntico) e V3×V1 = 0.009 (quase aleatório) — o áudio já domina o resultado do V2 sozinho, o metadado contribui pouco quando o áudio está presente. Se o objetivo é "achar faixas parecidas" por som, V2 e V3 já respondem isso de forma praticamente equivalente; V1 mede outra coisa (completude de classificação manual).
 3. **O TODO original do roadmap** ("sinalizar faixas cujo cluster diverge do rating manual") agora está desbloqueado — `track_clusters` já tem V1 e V2 persistidos; falta escrever o relatório que cruza cluster x rating (a query `07_outliers_rating_por_genero.sql` faz uma versão estatística disso por gênero, não por cluster ainda).
 4. **O assistente de LLM funciona bem no caso de uso principal** (busca estruturada), mas se a confiabilidade da cadeia local→web virar prioridade, as opções já avaliadas nesta sessão são: um modelo local maior (ex. `qwen2.5:14b`) ou um tier gratuito de nuvem (Gemini/Groq) — ambos fora do escopo desta rodada por decisão explícita de manter 100% local nesta primeira versão.
 5. **1 faixa (`track_id=210208753`) tem o arquivo referenciado pelo Rekordbox ausente em disco.** Vale uma checagem periódica de integridade Rekordbox↔arquivos, fora do escopo atual.
 6. **Parser de nome de arquivo (regra `KEY - BPM - Artista - Título`) mencionado no `docs/spec.md` não foi implementado nesta rodada** — a ingestão foi direto dos exports Rekordbox, que já trazem `Name`, key e BPM estruturados; o parser continua útil só como fallback pra faixas ainda não catalogadas no Rekordbox.
+7. **Implicação prática do achado do V3 pra próxima fase (classificação assistida)**: como V2 ≈ V3, o sinal de similaridade sonora vem quase todo do áudio — a fase de classificação pode se apoiar no cluster V3 (ou V2, equivalentes) como proxy de "soa parecido", em vez de tentar melhorar o encoding de metadado do V1 pra esse fim. Metadado continua útil pra filtro/negócio (gênero, MyTag, rating), só não pra medir semelhança sonora.
 
 ## Reprodutibilidade e privacidade
 
@@ -163,6 +170,7 @@ python src/ingest.py                    # ingestão: popula tracks/playlists/myt
 python src/cluster_v1.py                # clustering V1 (só metadados)
 python src/extract_audio_features.py    # extração de áudio via librosa (~2s/faixa, resumível)
 python src/cluster_v2.py                # clustering V2 (metadados + áudio), compara com V1
+python src/cluster_v3.py                # clustering V3 (só áudio, diagnóstico), compara com V1 e V2
 
 streamlit run src/explorer.py           # dashboard interativo -- abre em http://localhost:8501
 
@@ -174,7 +182,7 @@ python src/set_assistant.py             # chat de terminal
 - **`set_assistant.py`**: digite `sair` (ou `exit`/`quit`), `Ctrl+D` ou `Ctrl+C` — não há estado persistido nesse chat, interromper a qualquer momento é seguro.
 - **`streamlit run src/explorer.py`**: `Ctrl+C` no terminal onde está rodando (ou `pkill -f "streamlit run src/explorer.py"` se subiu em background). A tela só lê dados já persistidos no banco, nunca escreve — zero risco de corromper estado.
 - **`extract_audio_features.py`**: seguro interromper a qualquer momento (`Ctrl+C`) — é o único script que grava uma faixa por vez em vez de em lote, propositalmente (ver docstring do arquivo), então o progresso feito fica salvo; rodar de novo pula as faixas já processadas.
-- **`cluster_v1.py` / `cluster_v2.py`**: idempotentes — `persist_clusters` (`clustering_common.py`) faz `DELETE` do `cluster_version` correspondente antes de inserir, então interromper e rodar de novo é seguro, sem duplicata.
+- **`cluster_v1.py` / `cluster_v2.py` / `cluster_v3.py`**: idempotentes — `persist_clusters` (`clustering_common.py`) faz `DELETE` do `cluster_version` correspondente antes de inserir, então interromper e rodar de novo é seguro, sem duplicata.
 - **`ingest.py`: NÃO é idempotente** — insere com `to_sql(if_exists="append")`, sem limpar as tabelas antes. Interromper no meio, ou rodar duas vezes sobre um banco já populado, falha com erro de chave duplicada (`track_id`/`playlist_name`/`value_name` são `UNIQUE`/`PK`) em vez de duplicar silenciosamente — falha alto, que é a propriedade de segurança que importa aqui (nenhuma tabela fica com dado incoerente sem avisar). Pra rodar de novo do zero: dropa as tabelas afetadas e reaplica o schema antes de rodar `ingest.py` de novo:
   ```bash
   docker compose exec -T postgres psql -U beat_insights -d beat_insights -c \
@@ -190,10 +198,10 @@ python src/set_assistant.py             # chat de terminal
 
 1. ✅ **Ingestão de metadados** — merge dos exports XML + TXT, aplicação da regra de escopo (`All Tracks`), schema relacional inicial.
 2. ✅ **Integração Rekordbox (leitura)** — coberta pela ingestão acima, com queries analíticas prontas. Relatório de divergência cluster×rating (item 3 das conclusões) ainda em aberto.
-3. ✅ **Clusterização e visualização** — V1 estruturada, V2 com áudio, comparação entre as duas (ver "Resultados obtidos").
+3. ✅ **Clusterização e visualização** — V1 estruturada, V2 com áudio, V3 só-áudio (diagnóstico), comparação entre as três (ver "Resultados obtidos").
 3.5. ✅ **Explorador interativo de clusters** — dashboard local (`streamlit run src/explorer.py`), ponte antes de definir regras de classificação de faixas.
 4. ✅ **Assistente de set via LLM** — busca na base local primeiro, busca externa como complemento, 100% local/gratuito.
-5. ⏳ **Classificação assistida de faixas** — próxima fase, ainda não iniciada. Deve se apoiar nos achados das conclusões acima (cobertura de MyTag como prioridade, cluster V2 como referência de similaridade sonora).
+5. ⏳ **Classificação assistida de faixas** — próxima fase, ainda não iniciada. Deve se apoiar nos achados das conclusões acima (cobertura de MyTag como prioridade, cluster V2/V3 — equivalentes, ARI 0.909 — como referência de similaridade sonora).
 
 ---
 *Documento atualizado a partir dos resultados reais de cada fase, rodada contra a biblioteca Rekordbox do autor — não é mais só a especificação, é o que de fato aconteceu ao rodar o projeto.*
