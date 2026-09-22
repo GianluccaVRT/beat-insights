@@ -2,3 +2,5 @@ pandas
 SQLAlchemy
 psycopg2-binary
 python-dotenv
+scikit-learn
+matplotlib
