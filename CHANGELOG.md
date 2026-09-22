@@ -65,6 +65,28 @@ Ver `docs/decisions/ADR-001-tres-espacos-e-knn.md` pro contexto completo da deci
   sem MyTag testada teve só 7 valores de similaridade únicos entre os 10
   vizinhos mais próximos — empate real, como documentado no módulo.
 
+### Etapa 3 — Avaliação do k-NN, `src/eval_similarity.py` (2026-09-22)
+- Métrica: precision@10 por co-ocorrência em playlist, sobre **832 faixas**
+  (50.5% da biblioteca) que estão em ≥1 playlist. Baselines: aleatório puro e
+  "BPM+Camelot com ordem aleatória" (mesmos filtros duros do sistema real, sem
+  o ranking por similaridade) — 20 sorteios, seed fixa (42+draw), por faixa.
+- Grade: 3 espaços × 2 métricas (cosseno/euclidiana), com ablação com/sem
+  chroma em `meta_audio`/`audio` — 10 configurações, resultados em
+  `results/etapa3_2026-09/knn_eval.csv` (ver `results/etapa3_2026-09/README.md`
+  pra leitura completa).
+- **O sistema real bate os dois baselines em toda configuração** (baseline
+  aleatório ~0.22, BPM+Camelot aleatório ~0.30) — o ranking por similaridade
+  agrega valor sobre o filtro sozinho.
+- **`meta` vence por larga margem (0.70) — viés esperado, documentado, não
+  qualidade superior**: playlists desta biblioteca são majoritariamente
+  organizadas por gênero (`Prog House` 504 faixas, `Afro House` 143), e `meta`
+  inclui gênero como feature direta. `audio` (0.32–0.34) tem a menor
+  precision@10 mas ainda bate os baselines — coerente com a Etapa 1 (áudio
+  não "sabe" a qual playlist uma faixa pertence).
+- Ablação de chroma: melhora levemente `meta_audio` (0.42→0.46 cosine),
+  efeito pequeno e inconsistente entre métricas em `audio` puro —
+  inconclusivo, não usado pra decidir remover chroma.
+
 ## [Baseline 2026-09] — Fases 1–4 do projeto (2026-08-18 a 2026-09-22)
 
 Estado congelado pela tag `baseline-v1-v2`. Resumo (números completos e fontes em

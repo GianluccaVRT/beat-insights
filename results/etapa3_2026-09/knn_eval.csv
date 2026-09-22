@@ -1,0 +1,11 @@
+space,chroma,metric,n_faixas_no_espaco,n_faixas_avaliadas,precision_at_10_sistema,precision_at_10_baseline_aleatorio,precision_at_10_baseline_bpm_camelot,n_draws_baseline,seed_base
+meta,n/a,cosine,1649,832,0.7041,0.219,0.3046,20,42
+meta,n/a,euclidean,1649,832,0.6884,0.219,0.3046,20,42
+meta_audio,com_chroma,cosine,1648,831,0.4166,0.2185,0.3044,20,42
+meta_audio,com_chroma,euclidean,1648,831,0.4016,0.2185,0.3044,20,42
+meta_audio,sem_chroma,cosine,1648,831,0.4602,0.2185,0.3044,20,42
+meta_audio,sem_chroma,euclidean,1648,831,0.4421,0.2185,0.3044,20,42
+audio,com_chroma,cosine,1648,831,0.3389,0.2209,0.3044,20,42
+audio,com_chroma,euclidean,1648,831,0.3427,0.2209,0.3044,20,42
+audio,sem_chroma,cosine,1648,831,0.3214,0.2209,0.3044,20,42
+audio,sem_chroma,euclidean,1648,831,0.3364,0.2209,0.3044,20,42
