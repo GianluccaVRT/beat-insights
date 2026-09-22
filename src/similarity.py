@@ -45,6 +45,7 @@ def similar_tracks(
     bpm_tol: float | None = 3,
     camelot: bool = True,
     candidate_pool: int = DEFAULT_CANDIDATE_POOL,
+    restrict_ids=None,
 ) -> dict:
     """Retorna os k vizinhos mais próximos de `track_id` no espaço `space`.
 
@@ -53,6 +54,13 @@ def similar_tracks(
     varredura completa a cada filtro): `bpm_tol` (diferença absoluta de BPM,
     None desliga) e `camelot` (só key compatível pela roda de Camelot, ver
     src/camelot.py).
+
+    `restrict_ids`, quando informado (iterável de track_id), restringe a
+    própria matriz de features a esse subconjunto ANTES da busca -- não é um
+    filtro pós-busca. Usado pela aba "Vizinhos" do explorer pra comparar
+    resultados só entre faixas já classificadas (rating > 0 ou com MyTag),
+    já que nesse caso a vizinhança precisa ser recalculada dentro do
+    subconjunto, não apenas escondida depois de calculada com a base inteira.
     """
     if space not in features_mod.SPACES:
         return {"error": f"espaço desconhecido: {space!r} -- use um de {features_mod.SPACES}"}
@@ -60,6 +68,9 @@ def similar_tracks(
     tracks = features_mod.load_tracks(engine)
     mytag = features_mod.load_mytag(engine)
     audio = features_mod.load_audio(engine)
+    if restrict_ids is not None:
+        tracks = tracks[tracks.track_id.isin(restrict_ids)]
+        audio = audio[audio.track_id.isin(restrict_ids)]
     features = features_mod.build_space(space, tracks, mytag, audio)
 
     if track_id not in features.index:
@@ -68,6 +79,8 @@ def similar_tracks(
             if space in ("meta_audio", "audio")
             else "track_id não encontrado na base"
         )
+        if restrict_ids is not None:
+            reason += " -- ou fora do subconjunto restrito (restrict_ids)"
         return {"error": f"track_id {track_id} não está no espaço {space!r} -- {reason}"}
 
     pool = min(candidate_pool, len(features) - 1)

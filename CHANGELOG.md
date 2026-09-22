@@ -137,6 +137,43 @@ Ver `docs/decisions/ADR-001-tres-espacos-e-knn.md` pro contexto completo da deci
   das candidatas de desambiguação, em vez de perguntar ao usuário -- padrão de
   falha diferente do já conhecido (narrar sem invocar a tool).
 
+### Filtro de escopo "só tracks classificadas" em Clusters e Vizinhos (2026-09-22)
+- `src/cluster_classified.py`: reroda k-means (mesma lógica de `cluster_v1/v2/v3.py`,
+  via `src/features.py`/`clustering_common.py`) restrito às faixas já
+  classificadas (rating > 0 ou MyTag, mesmo critério de
+  `01_faixas_sem_classificacao.sql`) — **581/1649 faixas (35%)**. Persiste sob
+  `cluster_version` própria (sufixo `_classified`), sem sobrescrever V1/V2/V3
+  completos, e compara com a base inteira via Adjusted Rand Index. Resultados
+  em `results/clustering_classificado_2026-09/summary.json`.
+- **Achado**: silhouette do V1 (`meta`) **cai** de 0.368 pra **0.126** ao
+  restringir, e o ARI contra o V1 completo é quase zero (**0.0425**) — mas o
+  cluster dominante de 61%/rating médio 0.0 desaparece, os 4 clusters ficam
+  em 20–205 faixas com rating médio 1.8–3.8. Confirma por eliminação o achado
+  original: o silhouette alto do V1 vinha de separar "tem vs. não tem
+  metadado", não de agrupar por som. V2/V3 mal mudam (silhouette
+  0.072→0.078, 0.080→0.101; ARI 0.41/0.66) — já não dependiam do artefato.
+- `src/similarity.py`: `similar_tracks` ganha parâmetro opcional
+  `restrict_ids` — restringe a matriz de features (tracks + audio) ANTES da
+  busca k-NN, não um filtro pós-busca. Retrocompatível (default `None`, sem
+  efeito nos chamadores existentes como `set_assistant.py`).
+- `src/explorer.py`: novo controle "Faixas incluídas na análise" (Todas as
+  tracks / Só tracks classificadas) nas duas abas:
+  - **Vizinhos**: restringe a busca k-NN e as projeções PCA/UMAP de fundo ao
+    subconjunto classificado — vizinhança recalculada, não escondida.
+  - **Clusters**: troca pra `cluster_version` `_classified` (labels de
+    `cluster_classified.py`) e restringe a matriz usada na projeção 3D —
+    caixa de contexto mostra os números reais (silhouette, ARI) de cada
+    versão em vez do texto fixo da base inteira.
+  - `classified_track_ids()` extraído como helper único, usado pelas duas
+    abas (mesma definição de "classificada", sem duplicar a lógica).
+- Também nesta sessão: chat do assistente de set (`set_assistant.py`)
+  exposto como popover flutuante fixo no canto da tela via CSS, sempre
+  visível independente da aba ativa; legendas do gráfico de comparação de
+  perfil (Vizinhos) trocadas de texto genérico ("Referência"/"Vizinho
+  selecionado") pro nome real de cada faixa, com fix de cor de fonte
+  (title/legend do Plotly não herdam `layout.font.color` quando
+  parcialmente especificados).
+
 ## [Baseline 2026-09] — Fases 1–4 do projeto (2026-08-18 a 2026-09-22)
 
 Estado congelado pela tag `baseline-v1-v2`. Resumo (números completos e fontes em

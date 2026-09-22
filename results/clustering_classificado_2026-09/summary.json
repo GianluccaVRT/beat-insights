@@ -1,0 +1,168 @@
+{
+  "n_classified": 581,
+  "n_total": 1649,
+  "spaces": [
+    {
+      "space": "meta",
+      "cluster_version": "v1_structured_classified",
+      "n_tracks": 581,
+      "n_features": 73,
+      "best_k": 4,
+      "silhouette_by_k": {
+        "4": 0.126,
+        "5": 0.0983,
+        "6": 0.1057,
+        "7": 0.1045,
+        "8": 0.0949,
+        "9": 0.0902,
+        "10": 0.0926,
+        "11": 0.1089,
+        "12": 0.1086,
+        "13": 0.1088,
+        "14": 0.0887,
+        "15": 0.1013
+      },
+      "silhouette_best": 0.126,
+      "ari_vs_full": 0.0425,
+      "n_common_with_full": 581,
+      "cluster_summary": [
+        {
+          "cluster": 0,
+          "faixas": 161,
+          "bpm_medio": 124.3,
+          "rating_medio": 3.4,
+          "genero_mais_comum": "Progressive House"
+        },
+        {
+          "cluster": 1,
+          "faixas": 195,
+          "bpm_medio": 123.1,
+          "rating_medio": 3.5,
+          "genero_mais_comum": "Progressive House"
+        },
+        {
+          "cluster": 2,
+          "faixas": 20,
+          "bpm_medio": 143.3,
+          "rating_medio": 3.8,
+          "genero_mais_comum": "Psy-Trance"
+        },
+        {
+          "cluster": 3,
+          "faixas": 205,
+          "bpm_medio": 122.7,
+          "rating_medio": 1.8,
+          "genero_mais_comum": "Progressive House"
+        }
+      ]
+    },
+    {
+      "space": "meta_audio",
+      "cluster_version": "v2_audio_classified",
+      "n_tracks": 580,
+      "n_features": 101,
+      "best_k": 4,
+      "silhouette_by_k": {
+        "4": 0.0776,
+        "5": 0.0639,
+        "6": 0.0574,
+        "7": 0.0545,
+        "8": 0.056,
+        "9": 0.0514,
+        "10": 0.0587,
+        "11": 0.044,
+        "12": 0.0445,
+        "13": 0.0537,
+        "14": 0.0488,
+        "15": 0.0443
+      },
+      "silhouette_best": 0.0776,
+      "ari_vs_full": 0.4125,
+      "n_common_with_full": 580,
+      "cluster_summary": [
+        {
+          "cluster": 0,
+          "faixas": 77,
+          "bpm_medio": 123.1,
+          "rating_medio": 2.1,
+          "genero_mais_comum": "Progressive House"
+        },
+        {
+          "cluster": 1,
+          "faixas": 140,
+          "bpm_medio": 126.3,
+          "rating_medio": 3.0,
+          "genero_mais_comum": "Progressive House"
+        },
+        {
+          "cluster": 2,
+          "faixas": 175,
+          "bpm_medio": 123.2,
+          "rating_medio": 2.9,
+          "genero_mais_comum": "Progressive House"
+        },
+        {
+          "cluster": 3,
+          "faixas": 188,
+          "bpm_medio": 123.4,
+          "rating_medio": 3.1,
+          "genero_mais_comum": "Progressive House"
+        }
+      ]
+    },
+    {
+      "space": "audio",
+      "cluster_version": "v3_audio_only_classified",
+      "n_tracks": 580,
+      "n_features": 28,
+      "best_k": 4,
+      "silhouette_by_k": {
+        "4": 0.1007,
+        "5": 0.0745,
+        "6": 0.0764,
+        "7": 0.0727,
+        "8": 0.0602,
+        "9": 0.0588,
+        "10": 0.0689,
+        "11": 0.0672,
+        "12": 0.059,
+        "13": 0.0674,
+        "14": 0.0597,
+        "15": 0.0616
+      },
+      "silhouette_best": 0.1007,
+      "ari_vs_full": 0.6609,
+      "n_common_with_full": 580,
+      "cluster_summary": [
+        {
+          "cluster": 0,
+          "faixas": 104,
+          "bpm_medio": 123.5,
+          "rating_medio": 3.1,
+          "genero_mais_comum": "Progressive House"
+        },
+        {
+          "cluster": 1,
+          "faixas": 222,
+          "bpm_medio": 123.8,
+          "rating_medio": 2.8,
+          "genero_mais_comum": "Progressive House"
+        },
+        {
+          "cluster": 2,
+          "faixas": 180,
+          "bpm_medio": 124.6,
+          "rating_medio": 2.9,
+          "genero_mais_comum": "Progressive House"
+        },
+        {
+          "cluster": 3,
+          "faixas": 74,
+          "bpm_medio": 123.9,
+          "rating_medio": 2.8,
+          "genero_mais_comum": "Progressive House"
+        }
+      ]
+    }
+  ]
+}

@@ -51,6 +51,7 @@ src/
   extract_audio_features.py Extração de features de áudio via librosa, faixa a faixa, incremental/resumível
   cluster_v2.py             Clustering k-means espaço 'meta_audio', compara contra V1 (Adjusted Rand Index)
   cluster_v3.py             Clustering k-means espaço 'audio' (diagnóstico), compara contra V1 e V2
+  cluster_classified.py     Reroda V1/V2/V3 só nas faixas já classificadas (rating>0 ou MyTag), compara com a base inteira via ARI
   similarity.py             Busca k-NN (similar_tracks) nos 3 espaços, com filtros duros de BPM/Camelot
   verify_baseline.py        Recomputa e verifica (só leitura) os números do baseline V1/V2/V3 + ingestão
   audit_clustering.py       Etapa 1: varredura de k, silhouette por cluster, PCA loadings, ARI, H1-H3
@@ -58,7 +59,7 @@ src/
   explorer.py               Dashboard local (Streamlit), seletor "Clusters" / "Vizinhos" (k-NN + UMAP) no menu lateral
   set_assistant.py          Chat de terminal (Ollama local + DuckDuckGo), tools query_library/similar_tracks/web_search
 reports/               Saída visual do clustering (PCA 2D por versão, baseline)
-results/               Métricas/artefatos versionados por etapa (baseline_2026-09/, etapa1_2026-09/, etapa3_2026-09/, etapa5_2026-09/)
+results/               Métricas/artefatos versionados por etapa (baseline_2026-09/, etapa1_2026-09/, etapa3_2026-09/, etapa5_2026-09/, clustering_classificado_2026-09/)
 docker-compose.yml     Postgres local para desenvolvimento
 requirements.txt       Dependências Python (pandas, scikit-learn, librosa, ollama, ddgs, streamlit, plotly, umap-learn, ...)
 CHANGELOG.md           Histórico de mudanças por etapa, com números e arquivos de resultado
@@ -115,6 +116,20 @@ Agrupamento não supervisionado (k-means, k escolhido por silhouette score) em t
 
 Visualizações estáticas em `reports/cluster_v1_pca.png`, `reports/cluster_v2_pca.png` e `reports/cluster_v3_pca.png` (projeção PCA 2D) — ver também o explorador interativo abaixo (agora com V1/V2/V3).
 
+**Clustering restrito a faixas classificadas** (`cluster_classified.py`, resultados em `results/clustering_classificado_2026-09/summary.json`):
+
+Pergunta motivada pelo achado do V1 acima: será que o cluster dominante (61%, ausência de rating/MyTag) é um artefato de "tem vs. não tem metadado", ou o problema persiste mesmo isolando só as faixas já avaliadas? Reroda k-means nos três espaços, restrito às **581/1649 faixas classificadas (35%, rating > 0 ou MyTag)**, com os labels persistidos sob `cluster_version` própria (sufixo `_classified`), sem sobrescrever V1/V2/V3 completos:
+
+| Espaço | Silhouette (base inteira) | Silhouette (só classificadas) | ARI vs. base inteira |
+|---|---|---|---|
+| `meta` (V1) | 0.368 | **0.126** | **0.0425** |
+| `meta_audio` (V2) | 0.072 | 0.078 | 0.41 |
+| `audio` (V3) | 0.080 | 0.101 | 0.66 |
+
+- **V1 confirma o achado por eliminação**: restrito às faixas classificadas, o cluster dominante de 1007 faixas *desaparece* — os 4 clusters ficam em 20–205 faixas, todos com rating médio entre 1.8 e 3.8 (antes: um cluster de 61% com rating médio 0.0). Mas o silhouette **cai** de 0.368 pra 0.126, e o ARI contra o V1 completo é quase zero (0.0425) — ou seja, o silhouette alto do V1 original vinha majoritariamente de separar "tem metadado" de "não tem", não de agrupar por semelhança musical real dentro de quem já foi avaliado.
+- **V2 e V3 mal mudam**: silhouette praticamente igual (0.072→0.078, 0.080→0.101) e ARI moderado/alto (0.41, 0.66) — os espaços com áudio já não dependiam do artefato de metadado ausente, então restringir a população não muda o quadro qualitativo.
+- Reaproveita `src/features.py`/`src/clustering_common.py` — mesma lógica de `cluster_v1/v2/v3.py`, só filtrando a população de tracks/audio antes de montar a matriz de cada espaço.
+
 ### 3. Explorador interativo de clusters (`src/explorer.py`)
 
 Antes de definir regras de classificação de faixas (próxima fase), dá pra olhar onde as faixas caem hoje nos três modelos e questionar visualmente se os clusters fazem sentido musical, em vez de decidir só pelos números agregados. Dashboard local via Streamlit:
@@ -124,6 +139,7 @@ streamlit run src/explorer.py
 ```
 
 - Alterna entre os modelos V1 (metadados), V2 (metadados + áudio) e V3 (só áudio) já persistidos em `track_clusters` — recalcula só a projeção PCA (em 3D) pra plotar, não o clustering em si.
+- Filtro de escopo **"Faixas incluídas na análise"** (Todas as tracks / Só tracks classificadas): a opção restrita troca pra clusters de fato recalculados nesse subconjunto (`cluster_classified.py`, ver seção anterior), não um filtro visual — o gráfico, o perfil por cluster e a tabela passam a refletir só as 581 faixas classificadas, com a caixa de contexto acima do gráfico mostrando os números reais (silhouette, ARI) de cada versão.
 - Gráfico **3D** (`Scatter3d`, PCA com 3 componentes) com rotação/zoom interativos — eixos configuráveis: PCA 1/2/3, BPM, rating, play count, e (no V2/V3) tempo detectado/spectral centroid/RMS energy.
 - Filtros: gênero, MyTag, busca por artista/faixa, faixa de BPM, faixa de rating.
 - Cada ponto no gráfico tem tooltip com nome, artista, gênero, key, BPM, rating, play count e MyTag; tabela de perfil por cluster e tabela completa das faixas filtradas abaixo do gráfico.
@@ -155,6 +171,7 @@ Chat que, dado um contexto de evento em texto livre, busca primeiro na base cata
 7. **Implicação prática do achado do V3 pra próxima fase (classificação assistida)**: como V2 ≈ V3, o sinal de similaridade sonora vem quase todo do áudio — a fase de classificação pode se apoiar no cluster V3 (ou V2, equivalentes) como proxy de "soa parecido", em vez de tentar melhorar o encoding de metadado do V1 pra esse fim. Metadado continua útil pra filtro/negócio (gênero, MyTag, rating), só não pra medir semelhança sonora.
 8. ✅ **Resolvido** (fase "3 espaços + k-NN", ver seção dedicada abaixo): substituiu clustering puro por k-NN como mecanismo principal de recomendação, com avaliação quantitativa real (precision@10) em vez de só métricas internas de cluster.
 9. **Próximos passos mapeados, não implementados** (Etapa 6 da fase "3 espaços + k-NN", registrado aqui por decisão explícita de escopo): grafo de vizinhança (`pyvis` ou `streamlit-agraph`) visualizando as arestas k-NN da biblioteca inteira, e uma rota de transição A→B por caminho mínimo nesse grafo (série de faixas que conecta duas faixas específicas passo a passo, cada uma parecida com a próxima) — útil pra planejar a transição entre dois momentos de um set. Também em aberto: erro de síntese do assistente sobre resultado de tool ambíguo (ver "Assistente de set via LLM" acima) e testar um modelo local maior ou tier gratuito de nuvem pra confiabilidade de tool-calling encadeado (item 4).
+10. ✅ **Resolvido**: `cluster_classified.py` confirma por eliminação o achado do V1 (item 2) — restrito só às 581 faixas classificadas, o cluster dominante de 61%/rating 0.0 desaparece, mas o silhouette do V1 *cai* de 0.368 pra 0.126 (ARI vs. V1 completo = 0.0425), enquanto V2/V3 mal mudam (ARI 0.41/0.66). Ou seja: o silhouette alto do V1 original media completude de metadado, não semelhança musical real — nem dentro do subconjunto já avaliado manualmente o espaço `meta` forma clusters nítidos por som. Reforça a recomendação do item 7 (apoiar a próxima fase de classificação assistida em `meta_audio`/`audio`, não em `meta`).
 
 ## 3 espaços de features + k-NN (2026-09)
 
@@ -255,6 +272,7 @@ python src/cluster_v1.py                # clustering V1 (só metadados)
 python src/extract_audio_features.py    # extração de áudio via librosa (~2s/faixa, resumível)
 python src/cluster_v2.py                # clustering V2 (metadados + áudio), compara com V1
 python src/cluster_v3.py                # clustering V3 (só áudio, diagnóstico), compara com V1 e V2
+python src/cluster_classified.py        # reroda V1/V2/V3 só nas faixas classificadas, compara com a base inteira (ARI)
 
 streamlit run src/explorer.py           # dashboard interativo -- abre em http://localhost:8501, seletor Clusters/Vizinhos no menu lateral
 
@@ -273,7 +291,7 @@ python src/eval_similarity.py           # Etapa 3: precision@10 do k-NN vs. base
 - **`set_assistant.py`**: digite `sair` (ou `exit`/`quit`), `Ctrl+D` ou `Ctrl+C` — não há estado persistido nesse chat, interromper a qualquer momento é seguro.
 - **`streamlit run src/explorer.py`**: `Ctrl+C` no terminal onde está rodando (ou `pkill -f "streamlit run src/explorer.py"` se subiu em background). A tela só lê dados já persistidos no banco, nunca escreve — zero risco de corromper estado.
 - **`extract_audio_features.py`**: seguro interromper a qualquer momento (`Ctrl+C`) — é o único script que grava uma faixa por vez em vez de em lote, propositalmente (ver docstring do arquivo), então o progresso feito fica salvo; rodar de novo pula as faixas já processadas.
-- **`cluster_v1.py` / `cluster_v2.py` / `cluster_v3.py` / `audit_clustering.py`**: idempotentes — `persist_clusters` (`clustering_common.py`) faz `DELETE` do `cluster_version` correspondente antes de inserir, então interromper e rodar de novo é seguro, sem duplicata (e nunca toca em `v1_structured`/`v2_audio`/`v3_audio_only`, que são versões diferentes).
+- **`cluster_v1.py` / `cluster_v2.py` / `cluster_v3.py` / `cluster_classified.py` / `audit_clustering.py`**: idempotentes — `persist_clusters` (`clustering_common.py`) faz `DELETE` do `cluster_version` correspondente antes de inserir, então interromper e rodar de novo é seguro, sem duplicata (e nunca toca em `v1_structured`/`v2_audio`/`v3_audio_only`, que são versões diferentes).
 - **`verify_baseline.py` / `eval_similarity.py`**: só leitura, nunca escrevem no banco — seguro interromper a qualquer momento.
 - **`ingest.py`: NÃO é idempotente** — insere com `to_sql(if_exists="append")`, sem limpar as tabelas antes. Interromper no meio, ou rodar duas vezes sobre um banco já populado, falha com erro de chave duplicada (`track_id`/`playlist_name`/`value_name` são `UNIQUE`/`PK`) em vez de duplicar silenciosamente — falha alto, que é a propriedade de segurança que importa aqui (nenhuma tabela fica com dado incoerente sem avisar). Pra rodar de novo do zero: dropa as tabelas afetadas e reaplica o schema antes de rodar `ingest.py` de novo:
   ```bash

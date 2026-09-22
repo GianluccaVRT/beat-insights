@@ -36,6 +36,7 @@ import cluster_v1  # noqa: E402
 import cluster_v2  # noqa: E402
 import cluster_v3  # noqa: E402
 import features as features_mod  # noqa: E402
+import set_assistant  # noqa: E402
 import similarity as similarity_mod  # noqa: E402
 from clustering_common import get_engine  # noqa: E402
 
@@ -71,15 +72,34 @@ def load_base():
     return tracks, mytag_long, mytag_by_track
 
 
+def classified_track_ids(tracks: pd.DataFrame, mytag_by_track: dict) -> frozenset:
+    """Track_ids com rating > 0 OU MyTag atribuído -- mesmo critério de
+    sql/queries/01_faixas_sem_classificacao.sql (lá, a negação: sem rating E
+    sem MyTag). Compartilhado pelas abas Clusters e Vizinhos pro filtro "só
+    tracks classificadas", pra não divergir a definição entre as duas."""
+    return frozenset(
+        tracks.loc[(tracks["rating"] > 0) | tracks["track_id"].isin(mytag_by_track.keys()), "track_id"]
+    )
+
+
 # ------------------------------------------------------- dados: aba Clusters
 
 @st.cache_data(show_spinner="Montando espaço de features V1 (metadados)...")
-def load_v1():
+def load_v1(restrict_ids: frozenset | None = None):
+    """`restrict_ids`, quando informado, restringe tracks ao subconjunto antes
+    de montar a matriz de features e troca a cluster_version lida pra
+    'v1_structured_classified' (persistida por src/cluster_classified.py) --
+    são clusters de fato recalculados nesse subconjunto, não um filtro visual
+    em cima dos labels 'v1_structured' (base inteira)."""
     engine = get_engine()
     tracks, mytag_long, mytag_by_track = load_base()
+    if restrict_ids is not None:
+        tracks = tracks[tracks["track_id"].isin(restrict_ids)]
     features = cluster_v1.build_features(tracks, mytag_long)
+    version = "v1_structured_classified" if restrict_ids is not None else "v1_structured"
     labels = pd.read_sql(
-        text("SELECT track_id, cluster_label FROM track_clusters WHERE cluster_version = 'v1_structured'"), engine
+        text("SELECT track_id, cluster_label FROM track_clusters WHERE cluster_version = :v"),
+        engine, params={"v": version},
     ).set_index("track_id")["cluster_label"]
 
     df = tracks.set_index("track_id").loc[features.index].copy()
@@ -91,13 +111,20 @@ def load_v1():
 
 
 @st.cache_data(show_spinner="Montando espaço de features V2 (metadados + áudio)...")
-def load_v2():
+def load_v2(restrict_ids: frozenset | None = None):
+    """Ver docstring de load_v1 -- mesmo esquema, cluster_version
+    'v2_audio_classified' quando restrito."""
     engine = get_engine()
     tracks, mytag_long, mytag_by_track = load_base()
     audio = cluster_v2.load_audio_features(engine)
+    if restrict_ids is not None:
+        tracks = tracks[tracks["track_id"].isin(restrict_ids)]
+        audio = audio[audio["track_id"].isin(restrict_ids)]
     features = cluster_v2.build_features(tracks, mytag_long, audio)
+    version = "v2_audio_classified" if restrict_ids is not None else "v2_audio"
     labels = pd.read_sql(
-        text("SELECT track_id, cluster_label FROM track_clusters WHERE cluster_version = 'v2_audio'"), engine
+        text("SELECT track_id, cluster_label FROM track_clusters WHERE cluster_version = :v"),
+        engine, params={"v": version},
     ).set_index("track_id")["cluster_label"]
 
     df = tracks.set_index("track_id").loc[features.index].copy()
@@ -113,13 +140,20 @@ def load_v2():
 
 
 @st.cache_data(show_spinner="Montando espaço de features V3 (só áudio)...")
-def load_v3():
+def load_v3(restrict_ids: frozenset | None = None):
+    """Ver docstring de load_v1 -- mesmo esquema, cluster_version
+    'v3_audio_only_classified' quando restrito."""
     engine = get_engine()
     tracks, mytag_long, mytag_by_track = load_base()
     audio = cluster_v2.load_audio_features(engine)
+    if restrict_ids is not None:
+        tracks = tracks[tracks["track_id"].isin(restrict_ids)]
+        audio = audio[audio["track_id"].isin(restrict_ids)]
     features = cluster_v3.build_features(audio)
+    version = "v3_audio_only_classified" if restrict_ids is not None else "v3_audio_only"
     labels = pd.read_sql(
-        text("SELECT track_id, cluster_label FROM track_clusters WHERE cluster_version = 'v3_audio_only'"), engine
+        text("SELECT track_id, cluster_label FROM track_clusters WHERE cluster_version = :v"),
+        engine, params={"v": version},
     ).set_index("track_id")["cluster_label"]
 
     # tracks não usa as colunas de áudio como feature aqui (V3 é só-áudio), mas
@@ -157,19 +191,34 @@ COMPARISON_DIMS = {
 
 
 @st.cache_data(show_spinner="Montando espaço e projeções (UMAP + PCA)...")
-def load_space_for_knn(space: str):
+def load_space_for_knn(space: str, restrict_ids: frozenset | None = None):
     """Features padronizadas do espaço + projeções PCA e UMAP (2D) de fundo,
-    pra plotar a biblioteca inteira na aba Vizinhos. UMAP com random_state fixo
-    (reprodutível) -- n_jobs=1 é exigido pelo umap-learn quando random_state é
-    passado (senão ele ignora o paralelismo com um aviso)."""
+    pra plotar a biblioteca (ou um subconjunto dela) na aba Vizinhos. UMAP com
+    random_state fixo (reprodutível) -- n_jobs=1 é exigido pelo umap-learn
+    quando random_state é passado (senão ele ignora o paralelismo com um
+    aviso).
+
+    `restrict_ids`, quando informado, restringe tracks e audio ANTES de montar
+    a matriz de features -- projeções e distâncias saem recalculadas dentro do
+    subconjunto (não é um filtro visual em cima do resultado da base inteira).
+    Usado pelo controle "Faixas incluídas na análise" (todas vs. só
+    classificadas) na sidebar."""
     engine = get_engine()
     tracks = features_mod.load_tracks(engine)
     mytag = features_mod.load_mytag(engine)
     audio = features_mod.load_audio(engine)
+    if restrict_ids is not None:
+        tracks = tracks[tracks.track_id.isin(restrict_ids)]
+        audio = audio[audio.track_id.isin(restrict_ids)]
     features = features_mod.build_space(space, tracks, mytag, audio)
 
     pca_coords = PCA(n_components=2, random_state=42).fit_transform(features)
-    umap_coords = umap.UMAP(n_neighbors=15, min_dist=0.1, random_state=42, n_jobs=1).fit_transform(features)
+    # n_neighbors não pode passar de (n amostras - 1) -- protege o caso de
+    # escopo restrito reduzir bastante a base (ex.: só faixas classificadas).
+    umap_n_neighbors = min(15, len(features) - 1)
+    umap_coords = umap.UMAP(
+        n_neighbors=umap_n_neighbors, min_dist=0.1, random_state=42, n_jobs=1
+    ).fit_transform(features)
 
     display = pd.read_sql("SELECT track_id, name, artist, genre, key_camelot, bpm, rating FROM tracks", engine)
     df = display.set_index("track_id").loc[features.index].copy()
@@ -179,6 +228,68 @@ def load_space_for_knn(space: str):
 
 
 st.title("Explorador")
+
+# ============================================================= chat flutuante
+#
+# Assistente de set (set_assistant.py, Fase 4 + Etapa 5) exposto como um
+# popover fixado no canto da tela via CSS -- fica "pendente" (visível e
+# clicável) em cima de qualquer view (Clusters ou Vizinhos), sem depender de
+# qual delas está selecionada. Reaproveita set_assistant.run_turn/SYSTEM_PROMPT
+# direto (mesmo tool calling do chat de terminal), não duplica a lógica.
+
+
+def _message_role_and_content(msg):
+    if isinstance(msg, dict):
+        return msg.get("role"), msg.get("content")
+    return msg.role, msg.content
+
+
+if "chat_messages" not in st.session_state:
+    st.session_state.chat_messages = [{"role": "system", "content": set_assistant.SYSTEM_PROMPT}]
+
+st.markdown(
+    """
+    <style>
+    /* O botão do popover herda width:100% do container de bloco -- sem
+    travar a largura aqui, position:fixed some com o layout normal mas o
+    botão continua esticando pra largura da viewport inteira. */
+    div[data-testid="stPopover"] {
+        position: fixed;
+        bottom: 1.5rem;
+        right: 1.5rem;
+        z-index: 999;
+        width: fit-content;
+    }
+    div[data-testid="stPopover"] button {
+        width: fit-content;
+        border-radius: 999px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.25);
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+with st.popover("💬 Assistente de set", use_container_width=False):
+    st.caption(f"Ollama local (`{set_assistant.MODEL}`) -- `query_library` + `similar_tracks` + `web_search`.")
+
+    chat_box = st.container(height=380)
+    with chat_box:
+        for msg in st.session_state.chat_messages:
+            role, content = _message_role_and_content(msg)
+            if role in ("system", "tool") or not content:
+                continue
+            with st.chat_message("user" if role == "user" else "assistant"):
+                st.write(content)
+
+    user_msg = st.chat_input("Descreva o contexto do evento...", key="floating_chat_input")
+    if user_msg:
+        st.session_state.chat_messages.append({"role": "user", "content": user_msg})
+        with st.spinner("Pensando..."):
+            set_assistant.run_turn(get_engine(), st.session_state.chat_messages)
+        st.rerun()
+
+# ================================================================ navegação
 
 # Seleção de visualização fica no menu lateral (não em abas) -- cada view
 # mostra só os próprios controles no sidebar, não os das duas juntas.
@@ -193,8 +304,32 @@ if view == "Clusters":
         "Versão do modelo",
         ["V1 — metadados estruturados", "V2 — metadados + áudio", "V3 — só áudio (diagnóstico)"],
     )
+
+    _tracks_base, _mytag_long_base, _mytag_by_track_base = load_base()
+    cluster_classified_ids = classified_track_ids(_tracks_base, _mytag_by_track_base)
+
+    cluster_scope = st.sidebar.radio(
+        "Faixas incluídas na análise",
+        ["Todas as tracks", "Só tracks classificadas"],
+        key="cluster_scope",
+        help=(
+            "\"Classificada\" = rating > 0 ou com MyTag atribuído (mesmo critério de "
+            "`sql/queries/01_faixas_sem_classificacao.sql`). Restringir usa clusters "
+            "recalculados (k-means refeito só nesse subconjunto por "
+            "`src/cluster_classified.py`, persistidos sob cluster_version própria) -- "
+            "não é um filtro visual em cima dos clusters da base inteira."
+        ),
+    )
+    cluster_restrict_ids = cluster_classified_ids if cluster_scope == "Só tracks classificadas" else None
+    if cluster_restrict_ids is not None:
+        st.sidebar.caption(
+            f"{len(cluster_restrict_ids)} de {len(_tracks_base)} faixas classificadas "
+            f"({len(cluster_restrict_ids) / len(_tracks_base):.0%}) — clustering recalculado "
+            "só nesse subconjunto (ver `results/clustering_classificado_2026-09/summary.json`)."
+        )
+
     loaders = {"V1": load_v1, "V2": load_v2, "V3": load_v3}
-    df = loaders[version[:2]]()
+    df = loaders[version[:2]](cluster_restrict_ids)
 
     axis_options = {
         "PCA 1": "pca_1",
@@ -255,29 +390,62 @@ if view == "Clusters":
         "(Fase 3), não recalculados nesta tela."
     )
 
-    if version.startswith("V1"):
-        st.info(
-            "**V1**: k-means só com BPM, rating, gênero e MyTag (one-hot). k=4, silhouette 0.368. "
-            "Achado: o cluster dominante (61% da base) parece separar mais por *ausência de rating/MyTag* "
-            "do que por semelhança sonora — ver README, seção \"Resultados obtidos\".",
-            icon="ℹ️",
-        )
-    elif version.startswith("V2"):
-        st.info(
-            "**V2**: metadados + features de áudio via `librosa` (tempo, spectral centroid, RMS, MFCCs, "
-            "chroma). k=4, mas silhouette caiu para 0.072 e o Adjusted Rand Index contra o V1 é 0.019 — "
-            "os dois modelos discordam quase totalmente sobre o que é \"parecido\". Ver README.",
-            icon="ℹ️",
-        )
+    if cluster_restrict_ids is None:
+        if version.startswith("V1"):
+            st.info(
+                "**V1**: k-means só com BPM, rating, gênero e MyTag (one-hot). k=4, silhouette 0.368. "
+                "Achado: o cluster dominante (61% da base) parece separar mais por *ausência de rating/MyTag* "
+                "do que por semelhança sonora — ver README, seção \"Resultados obtidos\".",
+                icon="ℹ️",
+            )
+        elif version.startswith("V2"):
+            st.info(
+                "**V2**: metadados + features de áudio via `librosa` (tempo, spectral centroid, RMS, MFCCs, "
+                "chroma). k=4, mas silhouette caiu para 0.072 e o Adjusted Rand Index contra o V1 é 0.019 — "
+                "os dois modelos discordam quase totalmente sobre o que é \"parecido\". Ver README.",
+                icon="ℹ️",
+            )
+        else:
+            st.info(
+                "**V3**: k-means só com features de áudio (sem BPM/rating/gênero/MyTag na matriz) — "
+                "diagnóstico pra isolar o sinal de áudio puro. k=4, silhouette 0.080. Achado: o Adjusted "
+                "Rand Index contra o **V2 é 0.909** (quase idêntico) e contra o **V1 é 0.009** (quase "
+                "aleatório) — o áudio domina quase totalmente o resultado do V2, o metadado contribui "
+                "pouco. Ver README.",
+                icon="ℹ️",
+            )
     else:
-        st.info(
-            "**V3**: k-means só com features de áudio (sem BPM/rating/gênero/MyTag na matriz) — "
-            "diagnóstico pra isolar o sinal de áudio puro. k=4, silhouette 0.080. Achado: o Adjusted "
-            "Rand Index contra o **V2 é 0.909** (quase idêntico) e contra o **V1 é 0.009** (quase "
-            "aleatório) — o áudio domina quase totalmente o resultado do V2, o metadado contribui "
-            "pouco. Ver README.",
-            icon="ℹ️",
-        )
+        # Números reais de `src/cluster_classified.py`, rodado contra a biblioteca
+        # (581/1649 faixas classificadas, 35%) -- ver
+        # results/clustering_classificado_2026-09/summary.json.
+        if version.startswith("V1"):
+            st.info(
+                "**V1, só classificadas**: mesmo espaço `meta`, k-means refeito só nas 581 faixas "
+                "com rating > 0 ou MyTag (k=4). Silhouette **caiu pra 0.126** (vs. 0.368 na base inteira) "
+                "e o Adjusted Rand Index contra o V1 completo é **0.0425** (quase nada em comum) — "
+                "mas o cluster dominante de 61%/rating médio 0.0 *sumiu*: os 4 clusters agora ficam "
+                "em 20–205 faixas, todos com rating médio entre 1.8 e 3.8. Confirma o achado original: "
+                "o V1 completo estava separando sobretudo por *ter ou não* classificação, não por som.",
+                icon="ℹ️",
+            )
+        elif version.startswith("V2"):
+            st.info(
+                "**V2, só classificadas**: k-means refeito só nas 580 faixas classificadas com áudio "
+                "extraído (k=4). Silhouette **0.078** (vs. 0.072 na base inteira — praticamente igual) "
+                "e Adjusted Rand Index contra o V2 completo é **0.41** — moderado, os clusters mudam "
+                "mas não completamente. Diferente do V1, restringir a população não muda o quadro: "
+                "o áudio já não estava sendo diluído pelo artefato de metadado ausente.",
+                icon="ℹ️",
+            )
+        else:
+            st.info(
+                "**V3, só classificadas**: k-means refeito só nas 580 faixas classificadas com áudio "
+                "extraído (k=4). Silhouette **0.101** (vs. 0.080 na base inteira — leve alta) e "
+                "Adjusted Rand Index contra o V3 completo é **0.66** — o mais estável dos três frente "
+                "à restrição, consistente com V3 já isolar o sinal de áudio puro, sem o metadado "
+                "esparso que distorcia o V1. Ver `results/clustering_classificado_2026-09/summary.json`.",
+                icon="ℹ️",
+            )
 
     clusters = sorted(filtered["cluster"].unique())
     if len(clusters) > len(CATEGORICAL_COLORS):
@@ -359,21 +527,47 @@ else:  # view == "Vizinhos"
         f"{row.name_} — {row.artist}" if row.artist else row.name_: row.track_id
         for row in tracks_base.rename(columns={"name": "name_"}).itertuples()
     }
-    sorted_labels = sorted(track_label_to_id)
+    classified_ids = classified_track_ids(tracks_base, _mytag_by_track)
 
     st.sidebar.subheader("Vizinhos (k-NN)")
     knn_space = st.sidebar.selectbox("Espaço", ["meta", "meta_audio", "audio"], key="knn_space")
 
+    knn_scope = st.sidebar.radio(
+        "Faixas incluídas na análise",
+        ["Todas as tracks", "Só tracks classificadas"],
+        key="knn_scope",
+        help=(
+            "\"Classificada\" = rating > 0 ou com MyTag atribuído (mesmo critério de "
+            "`sql/queries/01_faixas_sem_classificacao.sql`). Restringir recalcula "
+            "vizinhança, projeção (PCA/UMAP) e comparação de perfil só dentro desse "
+            "subconjunto -- não é um filtro visual sobre o resultado da base inteira."
+        ),
+    )
+    restrict_ids = classified_ids if knn_scope == "Só tracks classificadas" else None
+    if restrict_ids is not None:
+        st.sidebar.caption(
+            f"{len(restrict_ids)} de {len(tracks_base)} faixas classificadas "
+            f"({len(restrict_ids) / len(tracks_base):.0%}) — dataset reduzido pra esta análise."
+        )
+
+    scoped_labels = sorted(
+        lbl for lbl, tid in track_label_to_id.items() if restrict_ids is None or tid in restrict_ids
+    )
+
     knn_search = st.sidebar.text_input("Buscar faixa por nome", key="knn_search")
     if knn_search:
-        knn_options = [lbl for lbl in sorted_labels if knn_search.lower() in lbl.lower()]
+        knn_options = [lbl for lbl in scoped_labels if knn_search.lower() in lbl.lower()]
         if not knn_options:
             st.sidebar.caption(f"Nenhuma faixa com {knn_search!r} no nome — mostrando a lista completa.")
-            knn_options = sorted_labels
+            knn_options = scoped_labels
         else:
             st.sidebar.caption(f"{len(knn_options)} faixa(s) encontrada(s).")
     else:
-        knn_options = sorted_labels
+        knn_options = scoped_labels
+
+    if not knn_options:
+        st.sidebar.error("Nenhuma faixa classificada disponível — desligue o filtro de escopo.")
+        st.stop()
 
     knn_track_label = st.sidebar.selectbox("Faixa de referência", knn_options, key="knn_track")
     knn_track_id = track_label_to_id[knn_track_label]
@@ -397,17 +591,20 @@ else:  # view == "Vizinhos"
             "é só uma opção de comparação, é a mesma projeção usada na aba Clusters."
         )
 
-    bg_df, space_features = load_space_for_knn(knn_space)
+    bg_df, space_features = load_space_for_knn(knn_space, restrict_ids)
+    if restrict_ids is not None:
+        st.caption(f"🔎 Escopo restrito: analisando {len(bg_df)} faixas classificadas (de {len(tracks_base)} na biblioteca).")
 
     if knn_track_id not in bg_df["track_id"].values:
+        scope_hint = " dentro do escopo \"só tracks classificadas\"" if restrict_ids is not None else ""
         st.error(
-            f"A faixa selecionada não está no espaço '{knn_space}' — provavelmente não tem "
+            f"A faixa selecionada não está no espaço '{knn_space}'{scope_hint} — provavelmente não tem "
             "`audio_features` extraído (ver README, Limitações conhecidas)."
         )
     else:
         result = similarity_mod.similar_tracks(
             get_engine(), knn_track_id, knn_space, k=knn_k, metric=knn_metric,
-            bpm_tol=knn_bpm_tol, camelot=knn_camelot_on,
+            bpm_tol=knn_bpm_tol, camelot=knn_camelot_on, restrict_ids=restrict_ids,
         )
         if "error" in result:
             st.error(result["error"])
@@ -421,12 +618,14 @@ else:  # view == "Vizinhos"
             neighbors_df = bg_df[bg_df.track_id.isin(neighbor_ids)]
             rest_df = bg_df[~bg_df.track_id.isin(neighbor_ids + [knn_track_id])]
 
+            rest_label = "Resto da biblioteca" if restrict_ids is None else "Resto das faixas classificadas"
+
             fig = go.Figure()
             fig.add_trace(
                 go.Scatter(
                     x=rest_df[proj_x], y=rest_df[proj_y], mode="markers",
                     marker=dict(color=OTHER_COLOR, size=4, opacity=0.35),
-                    name="Resto da biblioteca", hoverinfo="skip",
+                    name=rest_label, hoverinfo="skip",
                 )
             )
             sim_by_id = {m["track_id"]: m["similarity"] for m in result["matches"]}
@@ -514,16 +713,34 @@ else:  # view == "Vizinhos"
             ref_values = space_features.loc[knn_track_id, dim_cols].to_numpy(dtype=float)
             neighbor_values = space_features.loc[chosen_id, dim_cols].to_numpy(dtype=float)
 
+            # Legenda mostra o nome de verdade de cada faixa (não só "Referência"/
+            # "Vizinho selecionado" genérico) -- senão não dá pra saber qual barra
+            # é qual faixa sem olhar pro selectbox acima.
+            ref_legend = f"Referência: {ref_row['name']}"
+            neighbor_legend = f"Vizinho: {chosen_label.split(' — ')[0]}"
+
             fig_cmp = go.Figure()
-            fig_cmp.add_trace(go.Bar(x=dim_labels, y=ref_values, name="Referência", marker_color=CATEGORICAL_COLORS[1]))
-            fig_cmp.add_trace(go.Bar(x=dim_labels, y=neighbor_values, name="Vizinho selecionado", marker_color=CATEGORICAL_COLORS[0]))
+            fig_cmp.add_trace(go.Bar(x=dim_labels, y=ref_values, name=ref_legend, marker_color=CATEGORICAL_COLORS[1]))
+            fig_cmp.add_trace(go.Bar(x=dim_labels, y=neighbor_values, name=neighbor_legend, marker_color=CATEGORICAL_COLORS[0]))
             fig_cmp.update_layout(
                 barmode="group",
+                # font por sub-elemento (title/legend) não herda layout.font
+                # automaticamente no Plotly quando parcialmente especificado --
+                # sem "color" aqui, título e legenda saíam cinza-claro quase
+                # invisíveis sobre o fundo claro do gráfico.
+                title=dict(
+                    text=f"{ref_row['name']}  vs.  {chosen_label.split(' — ')[0]}",
+                    font=dict(size=13, color="#0b0b0b"),
+                ),
                 yaxis_title="z-score (desvios-padrão da média)",
+                legend=dict(
+                    orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0,
+                    font=dict(color="#0b0b0b"),
+                ),
                 plot_bgcolor="#fcfcfb", paper_bgcolor="#fcfcfb",
                 font=CHART_FONT,
                 yaxis=dict(gridcolor="#e1e0d9", zerolinecolor="#c3c2b7"),
-                height=350,
-                margin=dict(t=20),
+                height=380,
+                margin=dict(t=90),
             )
             st.plotly_chart(fig_cmp, use_container_width=True)
