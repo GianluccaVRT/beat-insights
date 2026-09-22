@@ -90,6 +90,12 @@ Diferente da versão anterior (dataset público), aqui os dados têm duas origen
 
 ## Schema proposto (revisão inicial — sujeito a ajuste após o primeiro export real)
 
+> **Nota**: o schema abaixo é o draft pré-implementação, mantido por valor histórico. O
+> schema final ficou mais simples em dois pontos, confirmados contra os exports reais —
+> ver `sql/schema/001_create_tables.sql` e a ressalva na Fase 1 do Roadmap: (1) sem
+> `mytag_groups` (MyTag é lista plana, sem grupo, em todo export do Rekordbox); (2)
+> `track_id` é o `TrackID` nativo do Rekordbox (inteiro), não um hash de path/UUID.
+
 ```
 tracks
   - track_id (PK, hash do caminho do arquivo ou UUID gerado)
@@ -196,28 +202,38 @@ Essa dualidade também serve como prova de nível técnico para quem avaliar o r
 
 ---
 
-# Roadmap (MVP em 4 fases, ordem confirmada)
+# Roadmap (MVP em 4 fases, ordem confirmada — todas implementadas)
 
-## Fase 1 — Leitura de metadados + input de classificação
-- Parser de nome de arquivo (regra Key-BPM-Artista-Título)
-- Leitura de tags nativas do arquivo (ID3 para MP3; avaliar `mutagen` para WAV/AIFF/FLAC)
-- Schema inicial (`tracks`, `mytag_groups`, `mytag_values`, `track_mytag`) populado a partir do parsing + tags locais
-- Interface simples de input para classificação manual (rating, MyTag) — via CLI ou front simples, a definir na fase de implementação
+## Fase 1 — Leitura de metadados + input de classificação — ⚠️ superada pela Fase 2
+Planejada como parsing de nome de arquivo + tags ID3/`mutagen` locais, com schema
+`mytag_groups`/`mytag_values` com grupo/categoria. **Não foi implementada como descrita
+acima**: a ingestão real (`src/ingest.py`) foi direto pros exports do Rekordbox (Fase 2),
+que já trazem `Name`, key, BPM e MyTag estruturados — tornando o parser de nome de arquivo
+e a leitura de ID3 desnecessários nesta rodada. `mytag_groups` também não existe no schema
+final: os exports reais confirmaram que o Rekordbox não expõe grupo/categoria pra MyTag em
+nenhum export (ver seção "Fonte de Dados" acima), então a tabela de grupo do draft acima
+viraria uma abstração sem dado real por trás — schema final é só `mytag_values`, lista
+plana. O parser de nome de arquivo continua útil como fallback futuro, pra faixas ainda
+não catalogadas no Rekordbox.
 
-## Fase 2 — Integração Rekordbox
-- Exportação XML (documentada no README)
-- Parser do XML, merge com a base da Fase 1 (play count, rating, MyTag, fallback de gênero/artista)
-- Relatório de faixas sem classificação (TODO já especificado acima)
+## Fase 2 — Integração Rekordbox ✅ implementada (virou a ingestão principal do projeto)
+- Exportação XML + TXT (documentada no README).
+- Parser + merge dos dois exports (`src/ingest.py`) — chave de merge real acabou sendo
+  `(Name, Artist, DateAdded)`, não só `Name`/`Track Title` (ver README, "Resultados
+  obtidos", pra por que título sozinho não é único).
+- Relatório de faixas sem classificação: implementado como query SQL
+  (`sql/queries/01_faixas_sem_classificacao.sql`), não como script Python standalone.
 
-## Fase 3 — Clustering e Visualização
-- V1: k-means sobre features estruturadas
-- V2: extração de áudio via `librosa`, comparação V1 vs. V2
-- Visualização (dashboard ou notebook) mostrando distribuição por energia, gênero, cluster
+## Fase 3 — Clustering e Visualização ✅ implementada
+- V1: k-means sobre features estruturadas (`src/cluster_v1.py`) — k=4, silhouette 0.368.
+- V2: extração de áudio via `librosa` (`src/extract_audio_features.py`) + clustering (`src/cluster_v2.py`) — k=4, silhouette caiu para 0.072, Adjusted Rand Index vs. V1 = 0.019. Números completos e interpretação em `README.md`, seção "Resultados obtidos".
+- **Visualização escolhida: dashboard interativo (não notebook)** — `src/explorer.py`, rodado via `streamlit run src/explorer.py`. Ponte entre "rodamos o clustering" e a próxima etapa de classificação assistida de faixas (ainda não iniciada): antes de propor regras de classificação, dá pra olhar visualmente onde as faixas caem hoje nos dois modelos. Alterna V1/V2, filtra por gênero/MyTag/artista/faixa/BPM/rating, e projeta em **3D** (`plotly.graph_objects.Scatter3d`, PCA com 3 componentes em vez de 2) com rotação e zoom interativos — decisão tomada porque um scatter 3D só se justifica quando a interação de orbitar é garantida (aqui é, nativa do Plotly dentro do Streamlit); um PNG 3D estático teria oclusão e perspectiva distorcendo distância sem ganho real sobre o 2D. Detalhes técnicos completos em `README.md`.
 
-## Fase 4 — Chat com LLM
-- Tool calling sobre a base estruturada (query por cluster/key/BPM/MyTag)
-- Busca externa como complemento, não substituto
-- Input de contexto de evento via prompt manual
+## Fase 4 — Chat com LLM ✅ implementada
+- Tool calling sobre a base estruturada (query por cluster/key/BPM/MyTag) — `src/set_assistant.py`, tool `query_library`.
+- Busca externa como complemento, não substituto — tool `web_search`.
+- Input de contexto de evento via prompt manual — chat de terminal.
+- **Mudança de stack vs. o planejado**: em vez de Claude API + Tavily (citados acima como exemplo), a implementação usa Ollama local (`llama3.1:8b`) + DuckDuckGo (`ddgs`, sem API key) — decisão pra manter a PoC 100% gratuita e reproduzível sem exigir nenhuma credencial paga. Trade-off e limitações reais (cadeia de 2 passos instável em modelo local pequeno) documentados no `README.md`.
 
 ---
 
