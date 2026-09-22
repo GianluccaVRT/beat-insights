@@ -43,10 +43,11 @@ src/
   cluster_v1.py             Clustering k-means só com metadados estruturados (BPM, rating, gênero, MyTag one-hot)
   extract_audio_features.py Extração de features de áudio via librosa, faixa a faixa, incremental/resumível
   cluster_v2.py             Clustering k-means com metadados + áudio, compara contra V1 (Adjusted Rand Index)
+  explorer.py               Dashboard local (Streamlit) pra explorar os clusters V1/V2 interativamente
   set_assistant.py          Chat de terminal (Ollama local + DuckDuckGo) que sugere faixas a partir de contexto de evento
 reports/               Saída visual do clustering (PCA 2D por versão)
 docker-compose.yml     Postgres local para desenvolvimento
-requirements.txt       Dependências Python (pandas, scikit-learn, librosa, ollama, ddgs, ...)
+requirements.txt       Dependências Python (pandas, scikit-learn, librosa, ollama, ddgs, streamlit, plotly, ...)
 ```
 
 ### O que cada query em `sql/queries/` faz
@@ -93,9 +94,23 @@ Agrupamento não supervisionado (k-means, k escolhido por silhouette score) em d
 - **Adjusted Rand Index entre V1 e V2 = 0.019** — praticamente zero, os dois modelos discordam quase totalmente sobre o que é "parecido".
 - **Conclusão**: isso confirma a hipótese do `docs/spec.md` de que metadado categórico sozinho não captura similaridade sonora real — o áudio introduz uma noção de semelhança tímbrica contínua e bem menos separável em blocos nítidos que a estrutura esparsa do one-hot do V1. Não é "o V2 deu errado"; é evidência de que o V1 media principalmente completude de metadado, não som.
 
-Visualizações em `reports/cluster_v1_pca.png` e `reports/cluster_v2_pca.png` (projeção PCA 2D).
+Visualizações estáticas em `reports/cluster_v1_pca.png` e `reports/cluster_v2_pca.png` (projeção PCA 2D) — ver também o explorador interativo abaixo.
 
-### 3. Assistente de set via LLM (`set_assistant.py`)
+### 3. Explorador interativo de clusters (`src/explorer.py`)
+
+Antes de definir regras de classificação de faixas (próxima fase), dá pra olhar onde as faixas caem hoje nos dois modelos e questionar visualmente se os clusters fazem sentido musical, em vez de decidir só pelos números agregados. Dashboard local via Streamlit:
+
+```
+streamlit run src/explorer.py
+```
+
+- Alterna entre os modelos V1 (metadados) e V2 (metadados + áudio) já persistidos em `track_clusters` — recalcula só a projeção PCA (agora em 3D) pra plotar, não o clustering em si.
+- Gráfico **3D** (`Scatter3d`, PCA com 3 componentes) com rotação/zoom interativos — eixos configuráveis: PCA 1/2/3, BPM, rating, play count, e (no V2) tempo detectado/spectral centroid/RMS energy.
+- Filtros: gênero, MyTag, busca por artista/faixa, faixa de BPM, faixa de rating.
+- Cada ponto no gráfico tem tooltip com nome, artista, gênero, key, BPM, rating, play count e MyTag; tabela de perfil por cluster e tabela completa das faixas filtradas abaixo do gráfico.
+- Paleta e codificação seguem o método do skill `dataviz` interno: cor categórica em ordem fixa (nunca ciclada) + símbolo por cluster como codificação secundária — testado com `scripts/validate_palette.js` do skill, que aponta que cor sozinha não é suficiente pra distinguir 4 clusters simultâneos num scatter (all-pairs); tabela em `st.dataframe` como visão alternativa sem depender de cor. `Scatter3d` do Plotly aceita um conjunto de símbolos bem menor que o `Scatter` 2D (sem `triangle-up`/`star`/etc.) — lista de símbolos própria pra 3D, mesma ordem fixa.
+
+### 4. Assistente de set via LLM (`set_assistant.py`)
 
 Chat que, dado um contexto de evento em texto livre, busca primeiro na base catalogada (`query_library`: filtra por BPM, key Camelot compatível, gênero, MyTag, cluster de som via `track_clusters`) e só recorre a busca externa (`web_search`, via DuckDuckGo) se a base local não cobrir o pedido.
 
@@ -126,7 +141,9 @@ Os arquivos de áudio da biblioteca pessoal do autor **não** fazem parte do rep
 1. ✅ **Ingestão de metadados** — merge dos exports XML + TXT, aplicação da regra de escopo (`All Tracks`), schema relacional inicial.
 2. ✅ **Integração Rekordbox (leitura)** — coberta pela ingestão acima, com queries analíticas prontas. Relatório de divergência cluster×rating (item 3 das conclusões) ainda em aberto.
 3. ✅ **Clusterização e visualização** — V1 estruturada, V2 com áudio, comparação entre as duas (ver "Resultados obtidos").
+3.5. ✅ **Explorador interativo de clusters** — dashboard local (`streamlit run src/explorer.py`), ponte antes de definir regras de classificação de faixas.
 4. ✅ **Assistente de set via LLM** — busca na base local primeiro, busca externa como complemento, 100% local/gratuito.
+5. ⏳ **Classificação assistida de faixas** — próxima fase, ainda não iniciada. Deve se apoiar nos achados das conclusões acima (cobertura de MyTag como prioridade, cluster V2 como referência de similaridade sonora).
 
 ---
 *Documento atualizado a partir dos resultados reais de cada fase, rodada contra a biblioteca Rekordbox do autor — não é mais só a especificação, é o que de fato aconteceu ao rodar o projeto.*

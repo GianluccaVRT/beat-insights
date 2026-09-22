@@ -7,3 +7,5 @@ matplotlib
 librosa
 ollama
 ddgs
+streamlit
+plotly
