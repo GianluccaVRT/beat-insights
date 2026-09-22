@@ -118,13 +118,17 @@ streamlit run src/explorer.py
 
 ### 4. Assistente de set via LLM (`set_assistant.py`)
 
-Chat que, dado um contexto de evento em texto livre, busca primeiro na base catalogada (`query_library`: filtra por BPM, key Camelot compatível, gênero, MyTag, cluster de som via `track_clusters`) e só recorre a busca externa (`web_search`, via DuckDuckGo) se a base local não cobrir o pedido.
+Chat que, dado um contexto de evento em texto livre, busca primeiro na base catalogada — `query_library` (filtra por BPM, key Camelot compatível, gênero, MyTag, cluster de som) ou `similar_tracks` (k-NN de verdade, Etapa 5 da fase "3 espaços + k-NN") — e só recorre a busca externa (`web_search`, via DuckDuckGo) se a base local não cobrir o pedido.
 
 **Decisão de stack**: 100% local e gratuito — Ollama (`llama3.1:8b`) + `ddgs`, sem nenhuma API key paga, no lugar de Claude API/Tavily citados como exemplo no `docs/spec.md`. Prioriza reprodutibilidade sem custo sobre usar o modelo mais capaz disponível.
 
-**Resultados, testado com pedidos reais:**
+**`similar_tracks`: espaço padrão `meta`, justificado pela Etapa 3.** Entre os três espaços, `meta` teve a maior precision@10 (0.70) contra co-ocorrência real em playlist — ou seja, é o que melhor reproduz o que este DJ já considerou "combinar" o bastante pra colocar na mesma playlist, que é justamente o objetivo prático de um assistente de set. Ressalva repassada ao modelo via descrição da própria tool: isso é em parte porque `meta` inclui gênero como feature direta (viés já documentado nos "Resultados obtidos" da Etapa 3) — pra achar vizinhos sonoros fora do gênero da faixa de referência, a tool aceita `space='audio'`.
+
+**Resultados, testado com pedidos reais** (ver `results/etapa5_2026-09/assistant_tests.md` pros 3 testes completos):
 - A busca estruturada isolada é confiável: testada com "warmup pôr do sol, organic/afro house, 118-122 bpm" → achou 47 candidatas reais na base e sintetizou 3 sugestões corretas com key compatível.
-- 3 bugs de integração corrigidos ao testar contra o modelo real: valores-placeholder que o modelo manda em campos opcionais (`0`, `"None"`) sendo tratados como filtro válido; múltiplos gêneros separados por vírgula num filtro só (`"organic house, afro house"`); key Camelot inválida derrubando com `ValueError` cru em vez de erro tratável.
+- `similar_tracks` funcionou de primeira em 2 dos 3 testes, incluindo um caso em que o modelo **trocou sozinho pro espaço `audio`** ao ler no pedido "fora do gênero", seguindo a dica da descrição da tool.
+- **Falha nova, documentada**: quando `similar_tracks` devolve um erro de nome ambíguo (`{"error": ..., "candidatas": [...]}`, pedindo pra especificar melhor), o modelo às vezes **não reconhece isso como um erro** — trata as candidatas de desambiguação como se fossem resultados de similaridade de verdade e inventa uma análise de compatibilidade sem sentido em cima delas, em vez de perguntar ao usuário qual faixa ele quis dizer. Padrão de falha diferente do já conhecido (narrar sem invocar a tool): aqui a tool roda certo, o problema é a síntese do modelo sobre um resultado de erro.
+- 3 bugs de integração corrigidos ao testar contra o modelo real: valores-placeholder que o modelo manda em campos opcionais (`0`, `"None"`) sendo tratados como filtro válido; múltiplos gêneros separados por vírgula num filtro só (`"organic house, afro house"`); key Camelot inválida derrubando com `ValueError` cru em vez de erro tratável. Mais 1 bug corrigido no `similar_tracks`: `bpm_tol=None` não distinguia "não informado" (usar padrão 3) de "desligado de propósito" — corrigido com `bpm_tol<=0` como sentinela explícita de "sem filtro".
 - **Limitação de classe de modelo, não bug**: a cadeia de 2 passos (tenta local → não acha → chama web_search) é instável no `llama3.1:8b` — às vezes ele narra "vou buscar na web" em texto solto sem de fato invocar a ferramenta, preenchendo a resposta com faixas fictícias. Um parser de recuperação (`_parse_pseudo_tool_call`) cobre o caso em que ele escreve a tool call como JSON em texto, mas não o caso em que só descreve a ação em prosa livre.
 
 ## Conclusões e próximos passos de melhoria
@@ -200,7 +204,7 @@ python src/set_assistant.py             # chat de terminal
 2. ✅ **Integração Rekordbox (leitura)** — coberta pela ingestão acima, com queries analíticas prontas. Relatório de divergência cluster×rating (item 3 das conclusões) ainda em aberto.
 3. ✅ **Clusterização e visualização** — V1 estruturada, V2 com áudio, V3 só-áudio (diagnóstico), comparação entre as três (ver "Resultados obtidos").
 3.5. ✅ **Explorador interativo de clusters** — dashboard local (`streamlit run src/explorer.py`), ponte antes de definir regras de classificação de faixas.
-4. ✅ **Assistente de set via LLM** — busca na base local primeiro, busca externa como complemento, 100% local/gratuito.
+4. ✅ **Assistente de set via LLM** — busca na base local primeiro (`query_library` + `similar_tracks`, k-NN), busca externa como complemento, 100% local/gratuito.
 5. ⏳ **Classificação assistida de faixas** — próxima fase, ainda não iniciada. Deve se apoiar nos achados das conclusões acima (cobertura de MyTag como prioridade, cluster V2/V3 — equivalentes, ARI 0.909 — como referência de similaridade sonora).
 
 ---

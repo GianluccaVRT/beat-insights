@@ -1,14 +1,23 @@
-"""Assistente de set via LLM (Fase 4): chat de terminal que sugere faixas da
-biblioteca a partir de um contexto de evento em texto livre (line-up, horário,
-estética), descrito pelo README/spec.md.
+"""Assistente de set via LLM (Fase 4 + Etapa 5 da fase "3 espaços + k-NN", ver
+ADR-001): chat de terminal que sugere faixas da biblioteca a partir de um
+contexto de evento em texto livre (line-up, horário, estética).
 
 Fluxo obrigatório, imposto via system prompt:
-1. Toda sugestão de faixa passa primeiro por query_library (busca estruturada na
-   base local: BPM, key Camelot compatível, gênero, MyTag, cluster de som via
-   track_clusters).
-2. web_search só entra se query_library não cobrir o pedido (poucas/nenhuma
-   candidata, ou pedido explícito de referências novas fora da biblioteca) --
-   nunca substitui a base local por padrão.
+1. Toda sugestão de faixa passa primeiro por uma ferramenta local -- query_library
+   (busca estruturada: BPM, key Camelot compatível, gênero, MyTag, cluster de som)
+   ou similar_tracks (k-NN de verdade, pra pedidos do tipo "parecido com X").
+2. web_search só entra se as ferramentas locais não cobrirem o pedido (poucas/
+   nenhuma candidata, ou pedido explícito de referências novas fora da
+   biblioteca) -- nunca substitui a base local por padrão.
+
+similar_tracks (Etapa 5) usa espaço 'meta' por padrão -- foi o que teve a maior
+precision@10 (0.70) contra co-ocorrência real em playlist na avaliação da Etapa 3
+(results/etapa3_2026-09/), ou seja, é o que melhor reproduz o que este DJ já
+considerou "combinar" o bastante pra colocar na mesma playlist. Ressalva
+documentada e repassada ao modelo via descrição da tool: esse resultado é em
+parte porque 'meta' inclui gênero como feature direta (viés conhecido, ver
+README) -- pra achar vizinhos sonoros fora do gênero da faixa de referência, o
+espaço 'audio' é mais indicado.
 
 Decisão: roda 100% local/gratuito -- Ollama (llama3.1:8b) para o LLM com tool
 calling, e DuckDuckGo (pacote `ddgs`, sem API key) para a busca externa. Troca a
@@ -41,11 +50,14 @@ from ddgs import DDGS
 from sqlalchemy import text
 
 import camelot
+import features as features_mod
+import similarity as similarity_mod
 from clustering_common import get_engine
 
 MODEL = "llama3.1:8b"
 MAX_TOOL_ITERATIONS = 6
 MAX_RESULTS = 50
+DEFAULT_SIMILARITY_SPACE = "meta"
 
 SYSTEM_PROMPT = """\
 Você é um assistente de set para um DJ/produtor de música eletrônica. Seu papel é \
@@ -55,17 +67,20 @@ próxima faixa de um set em tempo real, isso depende de leitura de pista e é se
 do DJ.
 
 Regras de busca, nessa ordem, sem exceção:
-1. Para qualquer pedido de sugestão de faixa, chame query_library primeiro. Combine \
-os filtros disponíveis (bpm_min/bpm_max, key_camelot, genre_contains, \
+1. Para qualquer pedido de sugestão de faixa, chame uma ferramenta local primeiro: \
+query_library pra busca estruturada (bpm_min/bpm_max, key_camelot, genre_contains, \
 mytag_contains, min_rating, similar_to_track_id) de acordo com o que o usuário \
-descreveu.
-2. Só use web_search se query_library retornar poucas candidatas (ou nenhuma) para \
-o pedido, ou se o usuário pedir explicitamente para descobrir referências novas \
-fora da biblioteca. Nunca chame web_search antes de tentar query_library, e nunca \
-substitua os resultados da biblioteca por resultados externos -- diferencie \
-claramente na resposta o que veio da biblioteca do que veio da web.
+descreveu; similar_tracks quando o pedido for do tipo "faixas parecidas com X" ou \
+"algo no estilo de X" -- é ranking real de similaridade (k-NN), não um filtro.
+2. Só use web_search se as ferramentas locais retornarem poucas candidatas (ou \
+nenhuma) para o pedido, ou se o usuário pedir explicitamente para descobrir \
+referências novas fora da biblioteca. Nunca chame web_search antes de tentar as \
+ferramentas locais, e nunca substitua os resultados da biblioteca por resultados \
+externos -- diferencie claramente na resposta o que veio da biblioteca do que veio \
+da web.
 3. Explique o motivo técnico das sugestões (compatibilidade de key, faixa de BPM, \
-mesmo cluster de som) -- não só liste nomes de faixa.
+mesmo cluster de som, ou a similaridade retornada por similar_tracks) -- não só \
+liste nomes de faixa.
 4. Nunca invente BPM, key, rating ou cluster de som para um resultado de \
 web_search -- os resultados da web só têm título, URL e um trecho de texto. Se \
 essa informação técnica não vier no resultado, diga que não foi encontrada, não \
@@ -110,13 +125,48 @@ WEB_SEARCH_TOOL = {
     "type": "function",
     "function": {
         "name": "web_search",
-        "description": "Busca externa na web (DuckDuckGo). Só usar como complemento, quando query_library não cobrir o pedido.",
+        "description": "Busca externa na web (DuckDuckGo). Só usar como complemento, quando as ferramentas locais não cobrirem o pedido.",
         "parameters": {
             "type": "object",
             "properties": {
                 "query": {"type": "string", "description": "Termos de busca."},
             },
             "required": ["query"],
+        },
+    },
+}
+
+SIMILAR_TRACKS_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "similar_tracks",
+        "description": (
+            "Busca as faixas mais parecidas com uma faixa de referência via k-NN (ranking real de "
+            "similaridade num espaço de features -- não é filtro de texto). Use pra pedidos do tipo "
+            "'faixas parecidas com X' ou 'algo no estilo de X'. BPM e key Camelot entram como filtro "
+            "duro (não mudam o ranking). Espaço padrão 'meta': teve a maior precision@10 (0.70) contra "
+            "co-ocorrência real em playlist (Etapa 3) -- reproduz melhor o que este DJ já considerou "
+            "'combinar' o bastante pra colocar na mesma playlist. Ressalva: isso é em parte porque "
+            "'meta' inclui gênero como feature -- pra achar vizinhos sonoros fora do gênero da faixa "
+            "de referência, peça space='audio'."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "track_name": {
+                    "type": "string",
+                    "description": "Nome (ou parte do nome) da faixa de referência -- busca por substring, case-insensitive.",
+                },
+                "space": {
+                    "type": "string",
+                    "description": "Espaço de features: 'meta' (padrão), 'meta_audio' ou 'audio'.",
+                },
+                "k": {"type": "integer", "description": "Número de vizinhos (padrão 10)."},
+                "metric": {"type": "string", "description": "'cosine' (padrão) ou 'euclidean'."},
+                "bpm_tol": {"type": "number", "description": "Tolerância de BPM (padrão 3; 0 desliga o filtro de BPM)."},
+                "camelot": {"type": "boolean", "description": "Filtrar por key Camelot compatível (padrão true)."},
+            },
+            "required": ["track_name"],
         },
     },
 }
@@ -221,12 +271,62 @@ def web_search(query: str) -> dict:
     return {"results": [{"title": r["title"], "url": r["href"], "snippet": r["body"]} for r in results]}
 
 
+def execute_similar_tracks(engine, **filters) -> dict:
+    filters = {k: _clean(v) for k, v in filters.items()}
+    track_name = filters.get("track_name")
+    if not track_name:
+        return {"error": "track_name é obrigatório."}
+
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text("SELECT track_id, name, artist FROM tracks WHERE name ILIKE :q ORDER BY name LIMIT 5"),
+            {"q": f"%{track_name}%"},
+        ).mappings().all()
+    if not rows:
+        return {"error": f"nenhuma faixa encontrada contendo {track_name!r} no nome."}
+    if len(rows) > 1:
+        # Não adivinha qual faixa o usuário quis dizer -- devolve as candidatas
+        # pra ferramenta pedir de novo com um nome mais específico.
+        return {
+            "error": f"{len(rows)} faixas encontradas contendo {track_name!r} -- especifique melhor.",
+            "candidatas": [dict(r) for r in rows],
+        }
+    track_id = rows[0]["track_id"]
+
+    space = filters.get("space") or DEFAULT_SIMILARITY_SPACE
+    if space not in features_mod.SPACES:
+        return {"error": f"espaço desconhecido: {space!r} -- use um de {features_mod.SPACES}"}
+
+    k = int(filters.get("k") or 10)
+    metric = filters.get("metric") or "cosine"
+    # "não veio" (usa padrão 3) é diferente de "desligado de propósito" -- como
+    # bpm_tol=None não distingue os dois casos (placeholder comum do modelo
+    # local pra "campo omitido", ver _clean), usa <=0 como sentinela explícita
+    # de "sem filtro de BPM", consistente com o padrão já usado pra
+    # similar_to_track_id em query_library.
+    bpm_tol = filters.get("bpm_tol")
+    if bpm_tol is None:
+        bpm_tol = 3.0
+    elif float(bpm_tol) <= 0:
+        bpm_tol = None
+    else:
+        bpm_tol = float(bpm_tol)
+    camelot_on = filters.get("camelot")
+    camelot_on = True if camelot_on is None else bool(camelot_on)
+
+    return similarity_mod.similar_tracks(
+        engine, track_id, space, k=k, metric=metric, bpm_tol=bpm_tol, camelot=camelot_on
+    )
+
+
 def execute_tool(engine, name: str, tool_input: dict) -> str:
     try:
         if name == "query_library":
             result = query_library(engine, **tool_input)
         elif name == "web_search":
             result = web_search(**tool_input)
+        elif name == "similar_tracks":
+            result = execute_similar_tracks(engine, **tool_input)
         else:
             result = {"error": f"ferramenta desconhecida: {name}"}
     except Exception as exc:  # noqa: BLE001 -- erro de ferramenta vira tool_result, não derruba o chat
@@ -234,7 +334,7 @@ def execute_tool(engine, name: str, tool_input: dict) -> str:
     return json.dumps(result, default=str)
 
 
-_PSEUDO_CALL_RE = re.compile(r'\{.*"name"\s*:\s*"(query_library|web_search)".*\}', re.DOTALL)
+_PSEUDO_CALL_RE = re.compile(r'\{.*"name"\s*:\s*"(query_library|web_search|similar_tracks)".*\}', re.DOTALL)
 
 
 def _parse_pseudo_tool_call(content: str) -> tuple[str, dict] | None:
@@ -266,7 +366,9 @@ def _parse_pseudo_tool_call(content: str) -> tuple[str, dict] | None:
 def run_turn(engine, messages: list) -> str:
     response = None
     for _ in range(MAX_TOOL_ITERATIONS):
-        response = ollama.chat(model=MODEL, messages=messages, tools=[QUERY_LIBRARY_TOOL, WEB_SEARCH_TOOL])
+        response = ollama.chat(
+            model=MODEL, messages=messages, tools=[QUERY_LIBRARY_TOOL, SIMILAR_TRACKS_TOOL, WEB_SEARCH_TOOL]
+        )
         messages.append(response["message"])
 
         tool_calls = list(response["message"].tool_calls or [])

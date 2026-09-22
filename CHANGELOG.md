@@ -113,6 +113,23 @@ Ver `docs/decisions/ADR-001-tres-espacos-e-knn.md` pro contexto completo da deci
   o aviso aparecendo, tabela de deltas com valores reais (não `n/a`) em
   espaços com áudio, gráfico de comparação atualizando por vizinho selecionado.
 
+### Etapa 5 — Tool `similar_tracks` no assistente LLM (2026-09-22)
+- `src/set_assistant.py`: nova tool `similar_tracks` (busca por nome de faixa via
+  substring, resolve ambiguidade devolvendo candidatas em vez de adivinhar).
+  Espaço padrão `meta`, justificado pela Etapa 3 (maior precision@10, 0.70) --
+  ressalva do viés de gênero repassada ao modelo via descrição da tool.
+- Bug corrigido: `bpm_tol=None` não distinguia "não informado" (padrão 3) de
+  "desligado de propósito" -- `bpm_tol<=0` vira o sentinela explícito de "sem
+  filtro", mesmo padrão já usado em `similar_to_track_id` (`query_library`).
+- Testado com 3 pedidos reais contra o Ollama (`results/etapa5_2026-09/
+  assistant_tests.md`): 2/3 tool calls corretos de primeira -- um deles com o
+  modelo trocando sozinho pro espaço `audio` ao interpretar "fora do gênero" no
+  pedido. **Falha nova documentada**: quando a tool devolve erro de nome
+  ambíguo (`{"error": ..., "candidatas": [...]}`), o modelo às vezes não
+  reconhece isso como erro e inventa uma análise de compatibilidade em cima
+  das candidatas de desambiguação, em vez de perguntar ao usuário -- padrão de
+  falha diferente do já conhecido (narrar sem invocar a tool).
+
 ## [Baseline 2026-09] — Fases 1–4 do projeto (2026-08-18 a 2026-09-22)
 
 Estado congelado pela tag `baseline-v1-v2`. Resumo (números completos e fontes em
