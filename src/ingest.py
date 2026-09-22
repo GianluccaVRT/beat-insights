@@ -1,47 +1,43 @@
-"""Ingestão do CSV "30000 Spotify Songs" para o schema normalizado em PostgreSQL.
+"""Ingestão da biblioteca Rekordbox real (Fase 1) para o schema em sql/schema/002_rekordbox_schema.sql.
 
-Um único script (não dividido em etapas): é um pipeline ETL linear de execução única
-sobre um CSV estático, sem necessidade de agendamento ou reuso independente de partes --
-dividir em múltiplos arquivos só adicionaria indireção sem ganho nesse escopo.
+Combina dois exports do Rekordbox, nenhum suficiente sozinho (ver docs/spec.md):
+- Export_Playlists.xml (Collection + Playlists): PlayCount, Location, TrackID, estrutura de playlists.
+- Playlists.txt (UTF-16, tab-separated): valores de MyTag, ausentes do XML.
 
-Decisões de tratamento de dado (números e motivação completos em docs/spec.md):
-- 5 linhas com track_artist/track_name/track_album_name nulos são descartadas antes de
-  qualquer split em dimensões.
-- playlist_id -> subgenre não é 1:1 no CSV bruto (8 de 471 playlists, 1,7%); resolvido
-  pela moda de playlist_subgenre por playlist_id, com desempate pela primeira ocorrência
-  no arquivo.
-- track_playlist é deduplicado em (track_id, playlist_id): 582 linhas repetem o mesmo par
-  com subgênero divergente -- não importa qual sobra, porque gênero não é armazenado
-  nessa tabela.
-- track_album_release_date tem 3 granularidades (dia completo / ano-mês / só ano);
-  partes ausentes são preenchidas com "01" e a granularidade original fica registrada em
-  albums.release_date_precision, para não disfarçar imputação como dado exato.
+Decisões de tratamento de dado, validadas contra a biblioteca real (1668 entradas na
+Collection, 1649 em "All Tracks"):
+- Escopo: qualquer TrackID presente na Collection mas ausente de "All Tracks" é
+  descartado (19 casos na biblioteca de referência: loops de sample e gravações de
+  set catalogadas por engano).
+- Chave de merge entre os dois exports: (Name, Artist, DateAdded), com Artist vazio
+  normalizado antes de comparar. "Name = Track Title" sozinho não é uma chave única --
+  3 colisões reais na biblioteca de referência (mesmo título, TrackIDs diferentes:
+  remixes/formatos distintos do mesmo release, e uma duplicata genuína) geram um
+  cartesiano espúrio num merge ingênuo por título. A chave composta resolve os 3
+  casos para um merge 1:1 exato.
+- rating do XML vem codificado como 0/51/102/153/204/255 (não 0-5 direto) --
+  decodificado via divisão inteira por 51.
+- "All Tracks" nunca é inserida em playlists/track_playlist: é usada só como filtro
+  de escopo, não como playlist de negócio (senão toda faixa teria uma linha
+  redundante apontando pra ela).
+- Estrutura de playlists é flat (nenhum nó Type="0"/pasta abaixo do ROOT na
+  biblioteca de referência) -- sem tabela de hierarquia.
 """
 
 import os
+import xml.etree.ElementTree as ET
 from pathlib import Path
+from urllib.parse import unquote
 
 import pandas as pd
 from dotenv import load_dotenv
 from sqlalchemy import create_engine
 
-CSV_PATH = Path(__file__).resolve().parent.parent / "data" / "raw" / "spotify_songs.csv"
+DATA_RAW = Path(__file__).resolve().parent.parent / "data" / "raw"
+XML_PATH = DATA_RAW / "Export_Playlists.xml"
+TXT_PATH = DATA_RAW / "Playlists.txt"
 
-TRACK_FEATURE_COLUMNS = [
-    "track_popularity",
-    "duration_ms",
-    "danceability",
-    "energy",
-    "key",
-    "loudness",
-    "mode",
-    "speechiness",
-    "acousticness",
-    "instrumentalness",
-    "liveness",
-    "valence",
-    "tempo",
-]
+ALL_TRACKS_PLAYLIST = "All Tracks"
 
 
 def get_engine():
@@ -55,83 +51,105 @@ def get_engine():
     return create_engine(url)
 
 
-def load_raw(csv_path: Path) -> pd.DataFrame:
-    df = pd.read_csv(csv_path)
-    before = len(df)
-    df = df.dropna(subset=["track_artist", "track_name", "track_album_name"])
-    print(f"[load_raw] {before} linhas lidas, {before - len(df)} descartadas (nulos), {len(df)} restantes")
-    return df
+def parse_collection(xml_path: Path) -> pd.DataFrame:
+    root = ET.parse(xml_path).getroot()
+    rows = []
+    for t in root.find("COLLECTION").findall("TRACK"):
+        rows.append(
+            {
+                "track_id": int(t.get("TrackID")),
+                "name": t.get("Name"),
+                "artist": t.get("Artist") or "",
+                "key_camelot": t.get("Tonality") or None,
+                "bpm": float(t.get("AverageBpm")) if t.get("AverageBpm") else None,
+                "genre": t.get("Genre") or None,
+                "kind": t.get("Kind") or None,
+                "duration_seconds": int(t.get("TotalTime")) if t.get("TotalTime") else None,
+                "file_path": unquote(t.get("Location") or "").replace("file://localhost", ""),
+                "date_added": t.get("DateAdded"),
+                "play_count": int(t.get("PlayCount") or 0),
+                "rating_raw": int(t.get("Rating") or 0),
+            }
+        )
+    df = pd.DataFrame(rows)
+    df["rating"] = df["rating_raw"] // 51
+    return df.drop(columns="rating_raw")
 
 
-def parse_release_date(raw: pd.Series) -> tuple[pd.Series, pd.Series]:
-    raw = raw.astype(str)
-    precision = pd.Series("day", index=raw.index)
-    precision[raw.str.len() == 7] = "month"
-    precision[raw.str.len() == 4] = "year"
-    date = pd.to_datetime(raw, format="mixed").dt.date
-    return date, precision
+def parse_playlists(xml_path: Path) -> tuple[pd.DataFrame, dict[str, set[str]]]:
+    """Retorna (metadados de playlist, {nome_playlist: {track_id, ...}}). Estrutura assumida flat."""
+    root = ET.parse(xml_path).getroot()
+    meta_rows = []
+    membership: dict[str, set[str]] = {}
+    for node in root.find("PLAYLISTS").iter("NODE"):
+        if node.get("Type") != "1":
+            continue
+        name = node.get("Name")
+        track_ids = {int(trk.get("Key")) for trk in node.findall("TRACK")}
+        meta_rows.append({"playlist_name": name, "entries": len(track_ids)})
+        membership[name] = track_ids
+    return pd.DataFrame(meta_rows), membership
 
 
-def build_genres(df: pd.DataFrame) -> pd.DataFrame:
-    return pd.DataFrame({"genre_name": df["playlist_genre"].unique()})
+def parse_mytag(txt_path: Path) -> pd.DataFrame:
+    df = pd.read_csv(txt_path, sep="\t", encoding="utf-16")
+    df["Artist"] = df["Artist"].fillna("")
+    return df[["Track Title", "Artist", "Date Added", "My Tag"]]
 
 
-def build_subgenres(df: pd.DataFrame) -> pd.DataFrame:
-    sub = df[["playlist_subgenre", "playlist_genre"]].drop_duplicates(subset="playlist_subgenre")
-    return sub.rename(columns={"playlist_subgenre": "subgenre_name", "playlist_genre": "genre_name"})
-
-
-def build_artists(df: pd.DataFrame) -> pd.DataFrame:
-    return pd.DataFrame({"artist_name": df["track_artist"].unique()})
-
-
-def build_albums(df: pd.DataFrame) -> pd.DataFrame:
-    albums = df.drop_duplicates(subset="track_album_id")[
-        ["track_album_id", "track_album_name", "track_album_release_date"]
-    ].copy()
-    albums["release_date"], albums["release_date_precision"] = parse_release_date(
-        albums["track_album_release_date"]
+def build_tracks(collection_df: pd.DataFrame, all_track_ids: set[int]) -> pd.DataFrame:
+    scoped = collection_df[collection_df.track_id.isin(all_track_ids)].copy()
+    print(
+        f"[build_tracks] Collection: {len(collection_df)}, "
+        f"excluídas (fora de 'All Tracks'): {len(collection_df) - len(scoped)}, "
+        f"restantes: {len(scoped)}"
     )
-    albums = albums.rename(columns={"track_album_id": "album_id", "track_album_name": "album_name"})
-    return albums[["album_id", "album_name", "release_date", "release_date_precision"]]
+    return scoped
 
 
-def resolve_playlist_subgenre(df: pd.DataFrame) -> pd.DataFrame:
-    """Moda de playlist_subgenre por playlist_id, desempate pela 1a ocorrência no arquivo."""
-    ordered = df[["playlist_id", "playlist_subgenre"]].copy()
-    ordered["_order"] = range(len(ordered))
-    counts = (
-        ordered.groupby(["playlist_id", "playlist_subgenre"])
-        .agg(n=("playlist_subgenre", "size"), first_seen=("_order", "min"))
-        .reset_index()
-        .sort_values(["playlist_id", "n", "first_seen"], ascending=[True, False, True])
+def build_playlists(playlist_meta: pd.DataFrame) -> pd.DataFrame:
+    playlists = playlist_meta[playlist_meta.playlist_name != ALL_TRACKS_PLAYLIST]
+    return playlists[["playlist_name"]].reset_index(drop=True)
+
+
+def build_track_playlist(membership: dict[str, set[str]], playlist_map: pd.DataFrame) -> pd.DataFrame:
+    rows = []
+    for name, track_ids in membership.items():
+        if name == ALL_TRACKS_PLAYLIST:
+            continue
+        playlist_id = playlist_map.loc[playlist_map.playlist_name == name, "playlist_id"].iloc[0]
+        rows.extend({"track_id": tid, "playlist_id": playlist_id} for tid in track_ids)
+    return pd.DataFrame(rows)
+
+
+def merge_mytag(tracks_df: pd.DataFrame, mytag_df: pd.DataFrame) -> pd.DataFrame:
+    merged = tracks_df.merge(
+        mytag_df,
+        left_on=["name", "artist", "date_added"],
+        right_on=["Track Title", "Artist", "Date Added"],
+        how="left",
     )
-    winners = counts.drop_duplicates(subset="playlist_id", keep="first")
-    return winners[["playlist_id", "playlist_subgenre"]]
+    unmatched = merged["Track Title"].isna().sum()
+    if unmatched:
+        print(f"[merge_mytag] AVISO: {unmatched} faixas sem correspondência no TXT (sem MyTag disponível)")
+    return merged
 
 
-def build_playlists(df: pd.DataFrame) -> pd.DataFrame:
-    names = df.drop_duplicates(subset="playlist_id")[["playlist_id", "playlist_name"]]
-    winners = resolve_playlist_subgenre(df)
-    playlists = names.merge(winners, on="playlist_id", how="left")
-    return playlists.rename(columns={"playlist_subgenre": "subgenre_name"})
-
-
-def build_tracks(df: pd.DataFrame) -> pd.DataFrame:
-    tracks = df.drop_duplicates(subset="track_id")[
-        ["track_id", "track_name", "track_artist", "track_album_id", *TRACK_FEATURE_COLUMNS]
-    ].copy()
-    return tracks.rename(
-        columns={
-            "track_artist": "artist_name",
-            "track_album_id": "album_id",
-            "track_popularity": "popularity",
-        }
+def build_mytag_values(merged_df: pd.DataFrame) -> pd.DataFrame:
+    all_tags = (
+        merged_df["My Tag"].dropna().str.split(" / ").explode().str.strip()
     )
+    all_tags = all_tags[all_tags != ""].unique()
+    return pd.DataFrame({"value_name": sorted(all_tags)})
 
 
-def build_track_playlist(df: pd.DataFrame) -> pd.DataFrame:
-    return df.drop_duplicates(subset=["track_id", "playlist_id"])[["track_id", "playlist_id"]]
+def build_track_mytag(merged_df: pd.DataFrame, value_map: pd.DataFrame) -> pd.DataFrame:
+    exploded = merged_df[["track_id", "My Tag"]].dropna(subset=["My Tag"]).copy()
+    exploded["value_name"] = exploded["My Tag"].str.split(" / ")
+    exploded = exploded.explode("value_name")
+    exploded["value_name"] = exploded["value_name"].str.strip()
+    exploded = exploded[exploded["value_name"] != ""]
+    return exploded.merge(value_map, on="value_name")[["track_id", "value_id"]]
 
 
 def load_dimension(df: pd.DataFrame, table: str, engine, id_col: str, natural_col: str) -> pd.DataFrame:
@@ -144,41 +162,35 @@ def load_dimension(df: pd.DataFrame, table: str, engine, id_col: str, natural_co
 
 def main() -> None:
     engine = get_engine()
-    df = load_raw(CSV_PATH)
 
-    genre_map = load_dimension(build_genres(df), "genres", engine, "genre_id", "genre_name")
+    collection_df = parse_collection(XML_PATH)
+    playlist_meta, membership = parse_playlists(XML_PATH)
+    mytag_df = parse_mytag(TXT_PATH)
 
-    subgenres = build_subgenres(df).merge(genre_map, on="genre_name", how="left")[["subgenre_name", "genre_id"]]
-    subgenre_map = load_dimension(subgenres, "subgenres", engine, "subgenre_id", "subgenre_name")
+    all_track_ids = membership[ALL_TRACKS_PLAYLIST]
+    tracks_df = build_tracks(collection_df, all_track_ids)
 
-    artist_map = load_dimension(build_artists(df), "artists", engine, "artist_id", "artist_name")
+    tracks_df.to_sql("tracks", engine, if_exists="append", index=False, method="multi", chunksize=500)
+    print(f"[load] tracks: {len(tracks_df)} linhas inseridas")
 
-    albums = build_albums(df)
-    albums.to_sql("albums", engine, if_exists="append", index=False, method="multi", chunksize=1000)
-    print(f"[load] albums: {len(albums)} linhas inseridas")
+    playlists_df = build_playlists(playlist_meta)
+    playlist_map = load_dimension(playlists_df, "playlists", engine, "playlist_id", "playlist_name")
 
-    tracks = build_tracks(df).merge(artist_map, on="artist_name", how="left")
-    tracks = tracks.drop(columns=["artist_name"])[
-        [
-            "track_id", "track_name", "artist_id", "album_id", "popularity",
-            "duration_ms", "danceability", "energy", "key", "loudness", "mode",
-            "speechiness", "acousticness", "instrumentalness", "liveness",
-            "valence", "tempo",
-        ]
-    ]
-    tracks.to_sql("tracks", engine, if_exists="append", index=False, method="multi", chunksize=1000)
-    print(f"[load] tracks: {len(tracks)} linhas inseridas")
-
-    playlists = build_playlists(df).merge(subgenre_map, on="subgenre_name", how="left")
-    playlists = playlists[["playlist_id", "playlist_name", "subgenre_id"]]
-    playlists.to_sql("playlists", engine, if_exists="append", index=False, method="multi", chunksize=1000)
-    print(f"[load] playlists: {len(playlists)} linhas inseridas")
-
-    track_playlist = build_track_playlist(df)
-    track_playlist.to_sql(
+    track_playlist_df = build_track_playlist(membership, playlist_map)
+    track_playlist_df.to_sql(
         "track_playlist", engine, if_exists="append", index=False, method="multi", chunksize=1000
     )
-    print(f"[load] track_playlist: {len(track_playlist)} linhas inseridas")
+    print(f"[load] track_playlist: {len(track_playlist_df)} linhas inseridas")
+
+    merged_df = merge_mytag(tracks_df, mytag_df)
+    mytag_values_df = build_mytag_values(merged_df)
+    value_map = load_dimension(mytag_values_df, "mytag_values", engine, "value_id", "value_name")
+
+    track_mytag_df = build_track_mytag(merged_df, value_map)
+    track_mytag_df.to_sql(
+        "track_mytag", engine, if_exists="append", index=False, method="multi", chunksize=1000
+    )
+    print(f"[load] track_mytag: {len(track_mytag_df)} linhas inseridas")
 
     print("Ingestão concluída.")
 

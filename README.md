@@ -1,163 +1,59 @@
-# beat-insights
+# Beat Insights
 
-Pipeline de dados sobre música eletrônica: ingestão em Python, PostgreSQL (Docker),
-queries SQL analíticas (CTEs, window functions, índices) e dashboard no Looker Studio.
-Projeto de portfólio ligado à minha atuação como DJ/produtor — as perguntas de negócio
-giram em torno de tendências de gênero/subgênero de EDM, não só métricas genéricas de
-streaming.
+Ferramenta de catalogação e análise da biblioteca musical de um DJ/produtor, criada para apoiar — com dados — a decisão de qual faixa entra em seguida num set. A decisão em tempo real (ler a pista) continua sendo do DJ; o projeto existe para reduzir o espaço de busca e revelar relações entre faixas que não são óbvias só de memória.
 
-Contexto completo de decisão (por que este dataset, trade-offs descartados) em
-[`docs/spec.md`](docs/spec.md).
+## O problema
 
-## Como rodar do zero
+Ao montar ou tocar um set, um DJ leva em conta o horário do slot, a estética da festa, e quem toca antes/depois. Parte da escolha da próxima faixa é técnica (mixagem harmônica via roda de Camelot, BPM compatível), parte é feeling, e parte é encontrar elementos semelhantes entre faixas (groove, melodia). Esse projeto cataloga a biblioteca de forma estruturada para apoiar essas três técnicas, sem tentar substituir a leitura de pista em tempo real.
 
-Pré-requisitos: Docker, Python 3.12+, e o CSV do dataset baixado manualmente do Kaggle
-([joebeachcapital/30000-spotify-songs](https://www.kaggle.com/datasets/joebeachcapital/30000-spotify-songs))
-em `data/raw/spotify_songs.csv`.
+## Fontes de dados
 
-```bash
-# 1. credenciais locais do Postgres
-cp .env.example .env
+O Rekordbox (software de gestão de biblioteca usado pelo autor) não expõe todos os dados relevantes por um único caminho — foram necessários dois exports diferentes, combinados:
 
-# 1.2 se já existir um volume de tentativa anterior:
-docker compose down -v
-
-# 2. sobe o Postgres (container beat-insights-db)
-docker compose up -d
-
-# 3. aplica o schema (7 tabelas, índices, comentários de catálogo)
-docker exec -i beat-insights-db psql -U beat_insights -d beat_insights < sql/schema/001_create_tables.sql
-
-# 4. ambiente Python e dependências
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
-
-# 5. roda a ingestão (CSV -> 7 tabelas normalizadas)
-.venv/bin/python src/ingest.py
-
-# 6. confere as contagens
-docker exec -i beat-insights-db psql -U beat_insights -d beat_insights -c "
-SELECT 'genres' t, COUNT(*) FROM genres
-UNION ALL SELECT 'subgenres', COUNT(*) FROM subgenres
-UNION ALL SELECT 'artists', COUNT(*) FROM artists
-UNION ALL SELECT 'albums', COUNT(*) FROM albums
-UNION ALL SELECT 'tracks', COUNT(*) FROM tracks
-UNION ALL SELECT 'playlists', COUNT(*) FROM playlists
-UNION ALL SELECT 'track_playlist', COUNT(*) FROM track_playlist;
-"
-```
-
-Contagens esperadas (dataset "30000 Spotify Songs", TidyTuesday): 6 genres, 24
-subgenres, 10.692 artists, 22.543 albums, 28.352 tracks, 471 playlists, 32.246
-track_playlist.
-
-As queries analíticas ficam em `sql/queries/` (ver seção abaixo) e podem ser rodadas
-com `docker exec -i beat-insights-db psql -U beat_insights -d beat_insights < sql/queries/01_top_tracks_por_subgenero.sql`,
-substituindo o nome do arquivo.
-
-## Schema
-
-```mermaid
-erDiagram
-    GENRES ||--o{ SUBGENRES : "1 genero p/ N subgeneros"
-    SUBGENRES ||--o{ PLAYLISTS : "1 subgenero p/ N playlists"
-    ARTISTS ||--o{ TRACKS : "1 artista p/ N faixas"
-    ALBUMS ||--o{ TRACKS : "1 album p/ N faixas"
-    TRACKS ||--o{ TRACK_PLAYLIST : ""
-    PLAYLISTS ||--o{ TRACK_PLAYLIST : ""
-
-    GENRES {
-        serial genre_id PK
-        varchar genre_name
-    }
-    SUBGENRES {
-        serial subgenre_id PK
-        varchar subgenre_name
-        int genre_id FK
-    }
-    ARTISTS {
-        serial artist_id PK
-        varchar artist_name
-    }
-    ALBUMS {
-        varchar album_id PK "Spotify ID"
-        varchar album_name
-        date release_date
-        varchar release_date_precision "day / month / year"
-    }
-    TRACKS {
-        varchar track_id PK "Spotify ID"
-        varchar track_name
-        int artist_id FK
-        varchar album_id FK
-        smallint popularity
-        real danceability
-        real energy
-        real tempo
-    }
-    PLAYLISTS {
-        varchar playlist_id PK "Spotify ID"
-        varchar playlist_name
-        int subgenre_id FK
-    }
-    TRACK_PLAYLIST {
-        varchar track_id PK_FK
-        varchar playlist_id PK_FK
-    }
-```
-
-`track_playlist` existe porque a granularidade real do CSV bruto é (faixa, playlist):
-a mesma faixa aparece várias vezes se está em playlists diferentes — sem essa tabela de
-junção, `tracks` teria audio features duplicadas por linha.
-
-## Decisões técnicas (resumo — detalhes e números completos em [`docs/spec.md`](docs/spec.md))
-
-- **Chave natural vs. serial:** `tracks`, `albums` e `playlists` usam o próprio ID do
-  Spotify como PK (já único e estável, sem motivo pra um serial redundante).
-  `genres`, `subgenres` e `artists` usam serial, porque essas dimensões não têm ID
-  nativo no CSV — só texto livre, sem garantia de estabilidade.
-- **`track_artist` sem split multi-artista:** 854 linhas (2,6%) têm algum separador
-  candidato (`,`, `;`, `feat.`, `&`, `with`), mas a inspeção manual mostrou que a
-  maioria é falso positivo — o separador é parte do nome do ato (`Dimitri Vegas & Like
-  Mike`, `Tyler, The Creator`). Só `feat.` é confiável (~11 linhas, 0,03%). Normalizar
-  cobriria menos de 0,1% dos dados e exigiria uma lista de exceções curada à mão —
-  desproporcional ao ganho.
-- **`playlist_id → subgenre` resolvido por moda:** 8 de 471 playlists (1,7%) aparecem
-  com mais de um `playlist_subgenre` no CSV bruto. A ingestão usa o subgênero mais
-  frequente por playlist, com desempate pela primeira ocorrência no arquivo.
-- **`albums.release_date_precision`:** o CSV tem 3 granularidades de data (dia
-  completo 94,3%, ano-mês 0,09%, só ano 5,65%). Datas incompletas são preenchidas com
-  dia/mês `01`, e essa coluna marca a granularidade original — sem ela, agregações
-  mensais/trimestrais teriam viés artificial em janeiro sem indicar que é imputação.
-
-## Queries analíticas (`sql/queries/`)
-
-| Arquivo | Pergunta de negócio | Destaque técnico |
+| Export | Formato | O que fornece |
 |---|---|---|
-| `01_top_tracks_por_subgenero.sql` | Quais as faixas mais populares dentro de cada subgênero de EDM? | `DENSE_RANK() OVER (PARTITION BY ...)` |
-| `02_variacao_anual_audio_features.sql` | Como energy/danceability médios evoluem ano a ano, por gênero? | `LAG() OVER (PARTITION BY ... ORDER BY ano)` |
-| `03_media_movel_popularidade_trimestral.sql` | Qual a tendência de popularidade por trimestre, por gênero, suavizada? | `AVG() OVER` com frame de linhas (média móvel de 4 trimestres) |
-| `04_artistas_recorrentes_subgeneros_edm.sql` | Quais artistas produzem consistentemente para múltiplos subgêneros de EDM? | 2 CTEs encadeadas (agregação → filtro → ranking) |
-| `05_lancamentos_por_trimestre.sql` | Como o volume de lançamentos cresce trimestre a trimestre nos últimos anos? | `idx_albums_release_date` + `EXPLAIN ANALYZE` real (ver destaque abaixo) |
-| `06_faixas_de_uma_playlist.sql` | Quais faixas pertencem a uma playlist específica? | `idx_track_playlist_playlist_id` + `EXPLAIN ANALYZE` real |
-| `07_outliers_popularidade_por_subgenero.sql` | Quais faixas mais se desviam da popularidade média do seu subgênero (top 10)? | Desvio via `AVG() OVER (PARTITION BY ...)` |
-| `08_sazonalidade_lancamentos_por_mes.sql` | Existe sazonalidade de lançamento por mês, por gênero? | Filtro `release_date_precision IN ('day','month')` |
+| Collection + Playlists | XML (`File > Export Collection in xml format`) | `PlayCount`, caminho do arquivo (`Location`), `TrackID`, estrutura de playlists (relação faixa↔playlist) |
+| Playlist para TXT | TXT (UTF-16, tab-separated) | Valores de **MyTag** (tags multi-select definidas livremente no Rekordbox) |
 
-### Destaque: índice existir ≠ índice ser usado
+**Por que os dois**: o MyTag — uma das classificações centrais do projeto — **não é exportado em nenhuma versão do XML do Rekordbox**, apenas no export em TXT. E o TXT, por sua vez, não traz `PlayCount`, caminho do arquivo, nem a estrutura de playlists. A junção dos dois é feita pelo título da faixa (`Track Title` no TXT = `Name` no XML), validado com correspondência exata em 100% dos casos na biblioteca de referência usada no desenvolvimento.
 
-Na query 05, testei primeiro um filtro de data amplo (`release_date >= '2015-01-01'`,
-~63% da tabela `albums`) — o Postgres **ignorou** `idx_albums_release_date` mesmo com
-ele presente, e escolheu Seq Scan, porque o filtro não era seletivo o bastante para
-compensar o custo do índice. Com um filtro mais estreito (`>= '2020-01-01'`, ~2,7% da
-tabela), o plano muda para `Bitmap Index Scan` e o custo estimado do sub-plano cai de
-563.14 para 242.77. Confirmei isso rodando `EXPLAIN ANALYZE` com o índice presente,
-depois `DROP INDEX` + mesma query, depois recriando o índice — o comparativo completo
-(planos reais, não teóricos) está documentado como comentário no final de
-`sql/queries/05_lancamentos_por_trimestre.sql`. Na query 06
-(`idx_track_playlist_playlist_id`), o ganho aparece também no tempo de execução real:
-2,374ms sem o índice vs. 0,676ms com ele (~3,5x), porque ali o Postgres varre e
-descarta 32.146 de 32.246 linhas sem o índice (`Rows Removed by Filter`).
+### Escopo dos dados: "All Tracks" como fonte da verdade
 
-## Dashboard
+O XML de `Collection` pode conter entradas que não são faixas de set — na biblioteca de referência, 19 delas eram loops de sample de produção e gravações de sets inteiros catalogadas por engano. A regra de escopo: **qualquer item presente na `Collection` mas ausente da playlist `All Tracks` é descartado da análise.** `All Tracks` é tratada como a fonte da verdade sobre o que conta como "faixa" no domínio deste projeto.
 
-_Pendente — próxima etapa do projeto._
+## Limitações conhecidas (documentadas, não escondidas)
+
+- **MyTag não tem informação de grupo/categoria em nenhum export do Rekordbox** — apenas uma lista plana de valores por faixa, sem indicar a qual grupo cada valor pertence. Isso é uma limitação do produto, não do processo de extração.
+- **Sem análise temporal de play count.** O Rekordbox expõe `PlayCount` como um contador acumulado, sem timestamp por reprodução — não há como derivar "estilos mais tocados ao longo do tempo" com os dados disponíveis. `PlayCount` é usado como sinal estático (ex: para priorizar quais faixas revisar primeiro), não como série temporal.
+- **Regras de nomenclatura de arquivo cobrem os casos observados até agora** (`KEY - BPM - Artista - Título`, com remixes nomeados preservados e sufixos genéricos como "Original Mix"/"Extended Mix" removidos); casos não previstos (VIP, Rework, Edit, múltiplos remixers) podem exigir ajuste do parser conforme aparecem na prática.
+
+## O que o sistema faz
+
+### 1. Catalogação
+Combina os dois exports do Rekordbox num schema relacional único (faixas, playlists, tags, e a relação N:N faixa↔playlist), com leitura de metadados nativos do arquivo de áudio (ID3 e equivalentes) como fallback quando o dado não vier do Rekordbox.
+
+### 2. Clusterização
+Agrupamento não supervisionado (k-means) das faixas, em duas etapas:
+- **V1** — apenas com metadados estruturados (BPM, rating, gênero, MyTag via one-hot encoding).
+- **V2** — enriquecido com features extraídas diretamente do áudio via `librosa` (tempo detectado, spectral centroid, RMS energy, MFCCs, chroma). Metadados categóricos sozinhos não capturam bem noções de similaridade sonora (timbre, "groove"); as features de áudio aproximam o sistema da forma como um DJ realmente escuta semelhança entre faixas, além de servir para validar/contestar o BPM informado pela loja de música.
+
+A comparação entre V1 e V2 é reportada como parte da análise — não só "rodamos um modelo", mas "o que mudou ao adicionar sinal de áudio".
+
+### 3. Assistente de set via LLM
+Um chat que, dado um contexto de evento descrito em texto livre (line-up, horário, estética), primeiro busca sugestões dentro da própria biblioteca já catalogada e só recorre a busca externa quando a base local não cobre o pedido.
+
+## Reprodutibilidade e privacidade
+
+Os arquivos de áudio da biblioteca pessoal do autor **não** fazem parte do repositório (direitos autorais). O que é público:
+- O **dataset de metadados** (informações públicas sobre as faixas — artista, título, BPM, key, classificações), sem os arquivos de áudio.
+- O projeto roda em dois modos: com o dataset de metadados incluso no repositório (permitindo que qualquer pessoa veja o funcionamento real, sem precisar de biblioteca própria), ou apontando para a biblioteca Rekordbox de quem estiver rodando.
+
+## Roadmap
+
+1. **Ingestão de metadados** — merge dos exports XML + TXT, aplicação da regra de escopo (`All Tracks`), parsing do nome de arquivo, schema relacional inicial.
+2. **Integração Rekordbox** (leitura) — já coberta pela ingestão acima. Próxima etapa dentro desta fase: relatório de faixas sem classificação (sem MyTag, sem rating) e sinalização de possíveis inconsistências entre rating manual e cluster obtido, para revisão humana — nunca correção automática.
+3. **Clusterização e visualização** — V1 estruturada, V2 com áudio, comparação entre as duas.
+4. **Assistente de set via LLM** — busca na base local primeiro, busca externa como complemento.
+
+---
+*Documento gerado a partir da especificação técnica do projeto; reflete decisões já validadas contra os exports reais do Rekordbox do autor.*
