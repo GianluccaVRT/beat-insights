@@ -134,7 +134,57 @@ Chat que, dado um contexto de evento em texto livre, busca primeiro na base cata
 
 Os arquivos de áudio da biblioteca pessoal do autor **não** fazem parte do repositório (direitos autorais) — `data/raw/*` é gitignored. O que é público:
 - O **código** de ingestão, clustering e assistente — qualquer pessoa com seus próprios exports do Rekordbox (ou um dataset de metadados equivalente) consegue rodar a pipeline completa.
-- A stack roda sem nenhuma API paga: Postgres local via `docker-compose up -d`, extração de áudio via `librosa` (CPU), e o assistente via Ollama local.
+- A stack roda sem nenhuma API paga: Postgres local via `docker-compose up -d`, extração de áudio via `librosa` (CPU), e o assistente via Ollama local. Ver "Como rodar" abaixo.
+
+## Como rodar
+
+### Pré-requisitos
+- Python 3.12+, Docker (Postgres local) e Ollama (assistente de LLM) — tudo local, nada pago.
+- Seus próprios exports do Rekordbox (`Export_Playlists.xml` e `Playlists.txt`) dentro de `data/raw/` — não vêm no repo (dados pessoais, gitignored). Sem eles dá pra ler o código, mas não pra rodar a pipeline contra dados reais.
+
+### Setup inicial
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+
+cp .env.example .env   # edite POSTGRES_* se quiser trocar as credenciais padrão
+
+docker compose up -d   # sobe o Postgres local (container beat-insights-db)
+
+# aplica o schema, em ordem -- não há psql no host, roda dentro do container
+docker compose exec -T postgres psql -U beat_insights -d beat_insights < sql/schema/001_create_tables.sql
+docker compose exec -T postgres psql -U beat_insights -d beat_insights < sql/schema/002_clustering.sql
+docker compose exec -T postgres psql -U beat_insights -d beat_insights < sql/schema/003_audio_features.sql
+```
+
+### Rodando cada fase (em ordem — cada uma depende dos dados da anterior)
+```bash
+python src/ingest.py                    # ingestão: popula tracks/playlists/mytag a partir dos exports
+python src/cluster_v1.py                # clustering V1 (só metadados)
+python src/extract_audio_features.py    # extração de áudio via librosa (~2s/faixa, resumível)
+python src/cluster_v2.py                # clustering V2 (metadados + áudio), compara com V1
+
+streamlit run src/explorer.py           # dashboard interativo -- abre em http://localhost:8501
+
+ollama pull llama3.1:8b                 # uma vez só, baixa o modelo (~5GB)
+python src/set_assistant.py             # chat de terminal
+```
+
+### Como interromper com segurança
+- **`set_assistant.py`**: digite `sair` (ou `exit`/`quit`), `Ctrl+D` ou `Ctrl+C` — não há estado persistido nesse chat, interromper a qualquer momento é seguro.
+- **`streamlit run src/explorer.py`**: `Ctrl+C` no terminal onde está rodando (ou `pkill -f "streamlit run src/explorer.py"` se subiu em background). A tela só lê dados já persistidos no banco, nunca escreve — zero risco de corromper estado.
+- **`extract_audio_features.py`**: seguro interromper a qualquer momento (`Ctrl+C`) — é o único script que grava uma faixa por vez em vez de em lote, propositalmente (ver docstring do arquivo), então o progresso feito fica salvo; rodar de novo pula as faixas já processadas.
+- **`cluster_v1.py` / `cluster_v2.py`**: idempotentes — `persist_clusters` (`clustering_common.py`) faz `DELETE` do `cluster_version` correspondente antes de inserir, então interromper e rodar de novo é seguro, sem duplicata.
+- **`ingest.py`: NÃO é idempotente** — insere com `to_sql(if_exists="append")`, sem limpar as tabelas antes. Interromper no meio, ou rodar duas vezes sobre um banco já populado, falha com erro de chave duplicada (`track_id`/`playlist_name`/`value_name` são `UNIQUE`/`PK`) em vez de duplicar silenciosamente — falha alto, que é a propriedade de segurança que importa aqui (nenhuma tabela fica com dado incoerente sem avisar). Pra rodar de novo do zero: dropa as tabelas afetadas e reaplica o schema antes de rodar `ingest.py` de novo:
+  ```bash
+  docker compose exec -T postgres psql -U beat_insights -d beat_insights -c \
+    "DROP TABLE IF EXISTS track_mytag, track_playlist, track_clusters, audio_features, mytag_values, tracks, playlists CASCADE;"
+  docker compose exec -T postgres psql -U beat_insights -d beat_insights < sql/schema/001_create_tables.sql
+  docker compose exec -T postgres psql -U beat_insights -d beat_insights < sql/schema/002_clustering.sql
+  docker compose exec -T postgres psql -U beat_insights -d beat_insights < sql/schema/003_audio_features.sql
+  ```
+- **Postgres (`docker compose`)**: `docker compose stop` pausa o container sem apagar nada (o volume `pgdata` persiste). `docker compose down` para e remove o container, mas o volume nomeado continua existindo — os dados sobrevivem. **Nunca rode `docker compose down -v`** nem remova o volume `pgdata` sem querer apagar tudo — isso destrói o banco de verdade, incluindo o resultado de horas de ingestão/extração de áudio/clustering.
+- **Ollama**: se subiu como serviço (`brew services start ollama`), `brew services stop ollama`. Se está em primeiro plano (`ollama serve`), `Ctrl+C`.
 
 ## Roadmap
 
