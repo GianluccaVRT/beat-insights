@@ -1,0 +1,25 @@
+component,rank,feature,loading
+PC1,1,rating_scaled,0.7872
+PC1,2,bpm_scaled,-0.5173
+PC1,3,genre_Progressive House,0.1901
+PC1,4,tag_Synth,0.1157
+PC1,5,tag_Hats marcantes,0.1151
+PC1,6,tag_Pluck Synth Delay,0.0926
+PC1,7,tag_Vocal,0.0787
+PC1,8,tag_Vocal Hipnótico,0.0729
+PC2,1,bpm_scaled,0.8469
+PC2,2,rating_scaled,0.4932
+PC2,3,genre_Melodic House & Techno,-0.0724
+PC2,4,tag_Synth,0.0703
+PC2,5,tag_Hats marcantes,0.0662
+PC2,6,tag_Vocal,0.0619
+PC2,7,genre_Afro House,-0.0529
+PC2,8,tag_Pluck Synth Delay,0.0488
+PC3,1,genre_Melodic House & Techno,0.8064
+PC3,2,genre_Progressive House,-0.5285
+PC3,3,tag_Synth,0.1205
+PC3,4,rating_scaled,0.1102
+PC3,5,tag_Vocal,0.1052
+PC3,6,genre_House,-0.0689
+PC3,7,genre_Afro House,-0.0663
+PC3,8,tag_Mid Night,0.0638

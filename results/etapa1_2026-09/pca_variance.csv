@@ -1,0 +1,10 @@
+space,component,explained_variance_ratio
+meta,PC1,0.3181
+meta,PC2,0.2473
+meta,PC3,0.0476
+meta_audio,PC1,0.2821
+meta_audio,PC2,0.0935
+meta_audio,PC3,0.0694
+audio,PC1,0.3198
+audio,PC2,0.105
+audio,PC3,0.0775

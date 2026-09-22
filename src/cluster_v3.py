@@ -12,6 +12,10 @@ groove/timbre real é inerentemente menos separável em blocos discretos?
 
 Persiste em track_clusters (cluster_version='v3_audio_only') e compara com V1 e V2
 via Adjusted Rand Index, sem sobrescrever nenhum dos dois.
+
+A partir do ADR-001 (docs/decisions/ADR-001-tres-espacos-e-knn.md), V3 é o apelido
+histórico do espaço 'audio'; a construção da matriz de features vive em
+src/features.py (build_audio) -- este módulo é um wrapper fino em cima dela.
 """
 
 from pathlib import Path
@@ -19,24 +23,18 @@ from pathlib import Path
 import pandas as pd
 from sklearn.cluster import KMeans
 from sklearn.metrics import adjusted_rand_score
-from sklearn.preprocessing import StandardScaler
 from sqlalchemy import text
 
 import cluster_v1
 import cluster_v2
+import features as features_mod
 from clustering_common import choose_k, get_engine, persist_clusters, plot_pca
 
 CLUSTER_VERSION = "v3_audio_only"
 
 
 def build_features(audio: pd.DataFrame) -> pd.DataFrame:
-    indexed = audio.set_index("track_id")
-    scaled = pd.DataFrame(
-        StandardScaler().fit_transform(indexed),
-        index=indexed.index,
-        columns=indexed.columns,
-    )
-    return scaled.astype(float)
+    return features_mod.build_audio(audio)
 
 
 def compare_with(engine, other_version: str, track_ids: pd.Index, labels) -> None:

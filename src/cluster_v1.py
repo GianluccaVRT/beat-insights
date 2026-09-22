@@ -1,7 +1,13 @@
-"""Clustering V1 (Fase 3): k-means só com metadados estruturados -- BPM, rating,
-gênero e MyTag via one-hot. Sem features de áudio (isso é V2, via librosa, em
-cluster_v2.py). Persiste os labels em track_clusters (cluster_version='v1_structured')
-para permitir comparação com V2 depois, sem sobrescrever.
+"""Clustering V1 / espaço 'meta' (Fase 3): k-means só com metadados estruturados --
+BPM, rating, gênero e MyTag via one-hot. Sem features de áudio (isso é V2/
+'meta_audio', via librosa, em cluster_v2.py). Persiste os labels em track_clusters
+(cluster_version='v1_structured') para permitir comparação com V2/V3 depois, sem
+sobrescrever.
+
+A partir do ADR-001 (docs/decisions/ADR-001-tres-espacos-e-knn.md), a construção da
+matriz de features vive em src/features.py (build_meta) -- este módulo é um wrapper
+fino em cima dela, mantido pra não quebrar cluster_v2.py/cluster_v3.py/explorer.py/
+verify_baseline.py, que importam `cluster_v1.build_features`/`load_data`.
 
 Decisões:
 - rating=0 ("sem avaliação") é tratado como ponto real na escala contínua, não como
@@ -15,45 +21,19 @@ from pathlib import Path
 
 import pandas as pd
 from sklearn.cluster import KMeans
-from sklearn.preprocessing import StandardScaler
 
+import features as features_mod
 from clustering_common import choose_k, get_engine, persist_clusters, plot_pca
 
 CLUSTER_VERSION = "v1_structured"
 
 
 def load_data(engine) -> tuple[pd.DataFrame, pd.DataFrame]:
-    tracks = pd.read_sql("SELECT track_id, bpm, rating, genre FROM tracks", engine)
-    mytag = pd.read_sql(
-        """
-        SELECT tm.track_id, mv.value_name
-        FROM track_mytag tm
-        JOIN mytag_values mv ON mv.value_id = tm.value_id
-        """,
-        engine,
-    )
-    return tracks, mytag
+    return features_mod.load_tracks(engine), features_mod.load_mytag(engine)
 
 
 def build_features(tracks: pd.DataFrame, mytag: pd.DataFrame) -> pd.DataFrame:
-    numeric = tracks.set_index("track_id")[["bpm", "rating"]]
-    numeric_scaled = pd.DataFrame(
-        StandardScaler().fit_transform(numeric),
-        index=numeric.index,
-        columns=["bpm_scaled", "rating_scaled"],
-    )
-
-    genre_onehot = pd.get_dummies(tracks.set_index("track_id")["genre"], prefix="genre")
-
-    mytag_onehot = (
-        pd.crosstab(mytag["track_id"], mytag["value_name"])
-        .clip(upper=1)
-        .reindex(tracks["track_id"], fill_value=0)
-    )
-    mytag_onehot.columns = [f"tag_{c}" for c in mytag_onehot.columns]
-
-    features = pd.concat([numeric_scaled, genre_onehot, mytag_onehot], axis=1)
-    return features.astype(float)
+    return features_mod.build_meta(tracks, mytag)
 
 
 def summarize(tracks: pd.DataFrame, labels) -> pd.DataFrame:

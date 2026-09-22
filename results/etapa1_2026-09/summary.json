@@ -1,0 +1,29 @@
+{
+  "gerado_em": "2026-09-22",
+  "excluidas_de_audio": [
+    210208753
+  ],
+  "espacos": {
+    "meta": {
+      "cluster_version": "meta_k4_2026-09",
+      "best_k": 4,
+      "silhouette": 0.3676,
+      "n_features": 83,
+      "n_faixas": 1649
+    },
+    "meta_audio": {
+      "cluster_version": "meta_audio_k2_2026-09",
+      "best_k": 2,
+      "silhouette": 0.1656,
+      "n_features": 111,
+      "n_faixas": 1648
+    },
+    "audio": {
+      "cluster_version": "audio_k2_2026-09",
+      "best_k": 2,
+      "silhouette": 0.1867,
+      "n_features": 28,
+      "n_faixas": 1648
+    }
+  }
+}

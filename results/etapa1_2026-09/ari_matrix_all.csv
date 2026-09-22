@@ -1,0 +1,16 @@
+version_a,version_b,n_common,ari
+meta_k4_2026-09,meta_audio_k2_2026-09,1648,-0.0072
+meta_k4_2026-09,audio_k2_2026-09,1648,-0.0074
+meta_k4_2026-09,v1_structured,1649,1.0
+meta_k4_2026-09,v2_audio,1648,0.0189
+meta_k4_2026-09,v3_audio_only,1648,0.009
+meta_audio_k2_2026-09,audio_k2_2026-09,1648,0.9903
+meta_audio_k2_2026-09,v1_structured,1648,-0.0072
+meta_audio_k2_2026-09,v2_audio,1648,0.2141
+meta_audio_k2_2026-09,v3_audio_only,1648,0.2118
+audio_k2_2026-09,v1_structured,1648,-0.0074
+audio_k2_2026-09,v2_audio,1648,0.2138
+audio_k2_2026-09,v3_audio_only,1648,0.2114
+v1_structured,v2_audio,1648,0.0189
+v1_structured,v3_audio_only,1648,0.009
+v2_audio,v3_audio_only,1648,0.9085

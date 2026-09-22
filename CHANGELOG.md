@@ -20,6 +20,33 @@ Ver `docs/decisions/ADR-001-tres-espacos-e-knn.md` pro contexto completo da deci
 - Renomeação de apelido: V1 = espaço `meta`, V2 = espaço `meta_audio`,
   `audio` = espaço novo (era chamado "V3" antes desta fase).
 
+### Etapa 1 — Auditoria de clustering nos 3 espaços (2026-09-22)
+- `src/features.py`: módulo único de construção dos 3 espaços (`build_meta`,
+  `build_meta_audio`, `build_audio`, `build_space`), consolidando a lógica antes
+  duplicada em `cluster_v1.py`/`cluster_v2.py`/`cluster_v3.py`. Os três scripts
+  viraram wrappers finos (mesma assinatura pública, sem quebrar `explorer.py`/
+  `verify_baseline.py`). Regra única pra faixa sem áudio documentada e aplicada
+  via `excluded_from_audio_spaces`.
+- **Alteração de schema** (confirmada com o usuário antes de aplicar):
+  `track_clusters.cluster_version` alargado de `VARCHAR(20)` pra `VARCHAR(40)` —
+  os nomes de versão novos (ex. `meta_audio_k2_2026-09`, 22 caracteres) estouravam
+  o limite antigo. `sql/schema/002_clustering.sql` atualizado.
+- `src/audit_clustering.py`: varredura de k=2–20 (silhouette + inércia) por
+  espaço, silhouette por cluster, PCA (3 componentes, variância explicada +
+  top-8 loadings por componente), matriz de ARI entre todos os pares (3 espaços
+  novos + os 3 rótulos históricos), teste das hipóteses H1–H3. Resultados em
+  `results/etapa1_2026-09/` (ver `results/etapa1_2026-09/README.md` pro resumo).
+- Rótulos novos persistidos em `track_clusters`, sem tocar nos históricos:
+  `meta_k4_2026-09` (k=4, silhouette 0.3676 — idêntico a `v1_structured`, ARI=1.0),
+  `meta_audio_k2_2026-09` (k=2, silhouette 0.1656),
+  `audio_k2_2026-09` (k=2, silhouette 0.1867).
+- **Achado**: ARI `meta_audio_k2` × `audio_k2` = **0.9903** (ainda mais alto que
+  o 0.9085 do baseline em k=4) — reforça que o áudio domina o agrupamento dos
+  espaços que o incluem.
+- Hipóteses: H1 refutada (k=2 não é o melhor em `meta`; k=4 é), H2 confirmada
+  (PC1 de `meta` dominado por rating/MyTag), H3 confirmada (treinar `meta` só
+  nas 333 faixas com tag muda substancialmente os clusters, ARI=0.0748).
+
 ## [Baseline 2026-09] — Fases 1–4 do projeto (2026-08-18 a 2026-09-22)
 
 Estado congelado pela tag `baseline-v1-v2`. Resumo (números completos e fontes em

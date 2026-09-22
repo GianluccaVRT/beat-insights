@@ -1,0 +1,72 @@
+{
+  "gerado_em": "2026-09-22",
+  "hipoteses": [
+    {
+      "hipotese": "H1: no espaço meta, k=2 tem o maior silhouette (catalogadas vs não-catalogadas)",
+      "resultado": "refutada",
+      "silhouette_k2": 0.3497,
+      "melhor_k": 4,
+      "melhor_silhouette": 0.3676,
+      "nota": "o melhor k foi 4 (silhouette 0.3676), não k=2 (silhouette 0.3497)"
+    },
+    {
+      "hipotese": "H2: o PC1 do espaço meta é dominado por rating e colunas de MyTag",
+      "resultado": "confirmada",
+      "top1_feature_pc1": "rating_scaled",
+      "n_rating_ou_tag_no_top8": 6,
+      "top8_pc1": [
+        {
+          "rank": 1,
+          "feature": "rating_scaled",
+          "loading": 0.7872
+        },
+        {
+          "rank": 2,
+          "feature": "bpm_scaled",
+          "loading": -0.5173
+        },
+        {
+          "rank": 3,
+          "feature": "genre_Progressive House",
+          "loading": 0.1901
+        },
+        {
+          "rank": 4,
+          "feature": "tag_Synth",
+          "loading": 0.1157
+        },
+        {
+          "rank": 5,
+          "feature": "tag_Hats marcantes",
+          "loading": 0.1151
+        },
+        {
+          "rank": 6,
+          "feature": "tag_Pluck Synth Delay",
+          "loading": 0.0926
+        },
+        {
+          "rank": 7,
+          "feature": "tag_Vocal",
+          "loading": 0.0787
+        },
+        {
+          "rank": 8,
+          "feature": "tag_Vocal Hipnótico",
+          "loading": 0.0729
+        }
+      ],
+      "nota": "6/8 das maiores cargas do PC1 são rating/MyTag, top1=rating_scaled"
+    },
+    {
+      "hipotese": "H3: rodar meta só nas 333 faixas com MyTag muda substancialmente os clusters",
+      "resultado": "confirmada",
+      "n_faixas_com_tag": 333,
+      "k_full_meta": 4,
+      "k_subset": 2,
+      "ari_full_restrito_vs_subset": 0.0748,
+      "limiar_usado": 0.3,
+      "nota": "ARI=0.0748 entre os rótulos do meta completo (restritos às faixas com tag) e os do meta treinado só nessas faixas -- baixo, mudou substancialmente"
+    }
+  ]
+}
