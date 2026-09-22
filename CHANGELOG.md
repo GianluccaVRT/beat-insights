@@ -174,6 +174,17 @@ Ver `docs/decisions/ADR-001-tres-espacos-e-knn.md` pro contexto completo da deci
   (title/legend do Plotly não herdam `layout.font.color` quando
   parcialmente especificados).
 
+### `Makefile` — comando único pra iniciar o ambiente (2026-09-22)
+- `make start`: sobe Postgres (`docker compose up -d`, espera `healthy`),
+  confere se o Ollama já responde em `localhost:11434` (tenta `brew services
+  start ollama` se não) e roda `streamlit run src/explorer.py` em foreground.
+  `make stop` para o Postgres sem apagar o volume `pgdata`. Não substitui os
+  passos de ingestão/clustering do README (só rodam uma vez); é atalho pro
+  dia a dia de uso do explorer já com os dados carregados.
+- Testado de ponta a ponta: `make start-db`, `make start-ollama` e `make
+  start` completo (Streamlit respondendo em `localhost:8501`), depois `make
+  stop` parando o container.
+
 ## [Baseline 2026-09] — Fases 1–4 do projeto (2026-08-18 a 2026-09-22)
 
 Estado congelado pela tag `baseline-v1-v2`. Resumo (números completos e fontes em

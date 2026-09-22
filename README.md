@@ -280,6 +280,17 @@ ollama pull llama3.1:8b                 # uma vez só, baixa o modelo (~5GB)
 python src/set_assistant.py             # chat de terminal (query_library + similar_tracks + web_search)
 ```
 
+### Atalho pra iniciar o ambiente: `make start`
+
+Depois da ingestão feita uma vez (passos acima), reiniciar o ambiente pra usar o explorer no dia a dia não precisa repetir tudo manualmente:
+
+```bash
+make start   # sobe Postgres (docker, espera healthy) + confere/inicia Ollama + roda o explorer em foreground
+make stop    # para o Postgres (docker compose stop) -- não apaga o volume pgdata
+```
+
+`make start` fica em foreground (o explorer) de propósito — `Ctrl+C` encerra só o Streamlit, sem derrubar Postgres/Ollama junto (mesma lógica de "Como interromper com segurança" abaixo). Não substitui os passos de ingestão/clustering acima, que só rodam uma vez (ou quando os dados do Rekordbox mudam).
+
 ### Fase "3 espaços de features + k-NN" (opcional, roda em cima dos dados acima)
 ```bash
 python src/verify_baseline.py           # recomputa e verifica os números do baseline (só leitura, não escreve no banco)
@@ -288,6 +299,7 @@ python src/eval_similarity.py           # Etapa 3: precision@10 do k-NN vs. base
 ```
 
 ### Como interromper com segurança
+- **`make start`**: `Ctrl+C` encerra só o Streamlit (foreground) — Postgres e Ollama continuam rodando em background, do jeito que ficariam se você tivesse subido cada um manualmente. Pra parar o Postgres também, `make stop` (não apaga o volume `pgdata`).
 - **`set_assistant.py`**: digite `sair` (ou `exit`/`quit`), `Ctrl+D` ou `Ctrl+C` — não há estado persistido nesse chat, interromper a qualquer momento é seguro.
 - **`streamlit run src/explorer.py`**: `Ctrl+C` no terminal onde está rodando (ou `pkill -f "streamlit run src/explorer.py"` se subiu em background). A tela só lê dados já persistidos no banco, nunca escreve — zero risco de corromper estado.
 - **`extract_audio_features.py`**: seguro interromper a qualquer momento (`Ctrl+C`) — é o único script que grava uma faixa por vez em vez de em lote, propositalmente (ver docstring do arquivo), então o progresso feito fica salvo; rodar de novo pula as faixas já processadas.
