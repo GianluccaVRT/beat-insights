@@ -180,70 +180,75 @@ def load_space_for_knn(space: str):
 
 st.title("Explorador")
 
-tab_clusters, tab_vizinhos = st.tabs(["Clusters", "Vizinhos"])
+# Seleção de visualização fica no menu lateral (não em abas) -- cada view
+# mostra só os próprios controles no sidebar, não os das duas juntas.
+view = st.sidebar.radio("Visualização", ["Clusters", "Vizinhos"], key="view_selector")
+st.sidebar.divider()
 
 
 # =============================================================== aba Clusters
 
-version = st.sidebar.radio(
-    "Versão do modelo",
-    ["V1 — metadados estruturados", "V2 — metadados + áudio", "V3 — só áudio (diagnóstico)"],
-)
-loaders = {"V1": load_v1, "V2": load_v2, "V3": load_v3}
-df = loaders[version[:2]]()
-
-axis_options = {
-    "PCA 1": "pca_1",
-    "PCA 2": "pca_2",
-    "PCA 3": "pca_3",
-    "BPM": "bpm",
-    "Rating": "rating",
-    "Play Count": "play_count",
-}
-if not version.startswith("V1"):
-    axis_options.update(
-        {
-            "Tempo detectado (áudio)": "tempo_detected",
-            "Spectral centroid (áudio)": "spectral_centroid_mean",
-            "RMS energy (áudio)": "rms_energy_mean",
-        }
+if view == "Clusters":
+    version = st.sidebar.radio(
+        "Versão do modelo",
+        ["V1 — metadados estruturados", "V2 — metadados + áudio", "V3 — só áudio (diagnóstico)"],
     )
+    loaders = {"V1": load_v1, "V2": load_v2, "V3": load_v3}
+    df = loaders[version[:2]]()
 
-st.sidebar.divider()
-st.sidebar.subheader("Eixos do gráfico (3D)")
-axis_labels = list(axis_options)
-x_label = st.sidebar.selectbox("Eixo X", axis_labels, index=0)
-y_label = st.sidebar.selectbox("Eixo Y", axis_labels, index=1)
-z_label = st.sidebar.selectbox("Eixo Z", axis_labels, index=2)
+    axis_options = {
+        "PCA 1": "pca_1",
+        "PCA 2": "pca_2",
+        "PCA 3": "pca_3",
+        "BPM": "bpm",
+        "Rating": "rating",
+        "Play Count": "play_count",
+    }
+    if not version.startswith("V1"):
+        axis_options.update(
+            {
+                "Tempo detectado (áudio)": "tempo_detected",
+                "Spectral centroid (áudio)": "spectral_centroid_mean",
+                "RMS energy (áudio)": "rms_energy_mean",
+            }
+        )
 
-st.sidebar.divider()
-st.sidebar.subheader("Filtros (Clusters)")
+    st.sidebar.divider()
+    st.sidebar.subheader("Eixos do gráfico (3D)")
+    axis_labels = list(axis_options)
+    x_label = st.sidebar.selectbox("Eixo X", axis_labels, index=0)
+    y_label = st.sidebar.selectbox("Eixo Y", axis_labels, index=1)
+    z_label = st.sidebar.selectbox("Eixo Z", axis_labels, index=2)
 
-genres = sorted(df["genre"].dropna().unique())
-selected_genres = st.sidebar.multiselect("Gênero", genres)
+    st.sidebar.divider()
+    st.sidebar.subheader("Filtros (Clusters)")
 
-all_tags = sorted({t for tags in df["mytags"] for t in (tags.split(", ") if tags != "—" else [])})
-selected_tags = st.sidebar.multiselect("MyTag", all_tags)
+    genres = sorted(df["genre"].dropna().unique())
+    selected_genres = st.sidebar.multiselect("Gênero", genres)
 
-artist_query = st.sidebar.text_input("Artista contém")
-name_query = st.sidebar.text_input("Faixa contém")
+    all_tags = sorted({t for tags in df["mytags"] for t in (tags.split(", ") if tags != "—" else [])})
+    selected_tags = st.sidebar.multiselect("MyTag", all_tags)
 
-bpm_lo, bpm_hi = float(df["bpm"].min()), float(df["bpm"].max())
-bpm_range = st.sidebar.slider("BPM", bpm_lo, bpm_hi, (bpm_lo, bpm_hi))
-rating_range = st.sidebar.slider("Rating", 0, 5, (0, 5))
+    artist_query = st.sidebar.text_input("Artista contém")
+    name_query = st.sidebar.text_input("Faixa contém")
 
-filtered = df
-if selected_genres:
-    filtered = filtered[filtered["genre"].isin(selected_genres)]
-if selected_tags:
-    filtered = filtered[filtered["mytags"].apply(lambda tags: any(t in tags.split(", ") for t in selected_tags))]
-if artist_query:
-    filtered = filtered[filtered["artist"].str.contains(artist_query, case=False, na=False)]
-if name_query:
-    filtered = filtered[filtered["name"].str.contains(name_query, case=False, na=False)]
-filtered = filtered[filtered["bpm"].between(*bpm_range) & filtered["rating"].between(*rating_range)]
+    bpm_lo, bpm_hi = float(df["bpm"].min()), float(df["bpm"].max())
+    bpm_range = st.sidebar.slider("BPM", bpm_lo, bpm_hi, (bpm_lo, bpm_hi))
+    rating_range = st.sidebar.slider("Rating", 0, 5, (0, 5))
 
-with tab_clusters:
+    filtered = df
+    if selected_genres:
+        filtered = filtered[filtered["genre"].isin(selected_genres)]
+    if selected_tags:
+        filtered = filtered[filtered["mytags"].apply(lambda tags: any(t in tags.split(", ") for t in selected_tags))]
+    if artist_query:
+        filtered = filtered[filtered["artist"].str.contains(artist_query, case=False, na=False)]
+    if name_query:
+        filtered = filtered[filtered["name"].str.contains(name_query, case=False, na=False)]
+    filtered = filtered[filtered["bpm"].between(*bpm_range) & filtered["rating"].between(*rating_range)]
+
+    st.sidebar.caption(f"{len(filtered)} de {len(df)} faixas após os filtros")
+
     st.caption(
         "Fase 3.5 — visualização interativa dos modelos de clustering antes de definir regras de "
         "classificação de faixas. Os clusters aqui são os mesmos persistidos em `track_clusters` "
@@ -273,8 +278,6 @@ with tab_clusters:
             "pouco. Ver README.",
             icon="ℹ️",
         )
-
-    st.sidebar.caption(f"{len(filtered)} de {len(df)} faixas após os filtros (Clusters)")
 
     clusters = sorted(filtered["cluster"].unique())
     if len(clusters) > len(CATEGORICAL_COLORS):
@@ -350,26 +353,37 @@ with tab_clusters:
 
 # =============================================================== aba Vizinhos
 
-tracks_base, _mytag_long, _mytag_by_track = load_base()
-track_label_to_id = {
-    f"{row.name_} — {row.artist}" if row.artist else row.name_: row.track_id
-    for row in tracks_base.rename(columns={"name": "name_"}).itertuples()
-}
-sorted_labels = sorted(track_label_to_id)
+else:  # view == "Vizinhos"
+    tracks_base, _mytag_long, _mytag_by_track = load_base()
+    track_label_to_id = {
+        f"{row.name_} — {row.artist}" if row.artist else row.name_: row.track_id
+        for row in tracks_base.rename(columns={"name": "name_"}).itertuples()
+    }
+    sorted_labels = sorted(track_label_to_id)
 
-st.sidebar.divider()
-st.sidebar.subheader("Vizinhos (k-NN)")
-knn_space = st.sidebar.selectbox("Espaço", ["meta", "meta_audio", "audio"], key="knn_space")
-knn_track_label = st.sidebar.selectbox("Faixa de referência", sorted_labels, key="knn_track")
-knn_track_id = track_label_to_id[knn_track_label]
-knn_k = st.sidebar.slider("k (nº de vizinhos)", 3, 30, 10, key="knn_k")
-knn_metric = st.sidebar.selectbox("Métrica", ["cosine", "euclidean"], key="knn_metric")
-knn_bpm_on = st.sidebar.checkbox("Filtrar por tolerância de BPM", value=True, key="knn_bpm_on")
-knn_bpm_tol = st.sidebar.slider("Tolerância de BPM", 1, 15, 3, key="knn_bpm_tol") if knn_bpm_on else None
-knn_camelot_on = st.sidebar.checkbox("Filtrar por key Camelot compatível", value=True, key="knn_camelot")
-knn_projection = st.sidebar.radio("Projeção de fundo", ["UMAP", "PCA"], key="knn_projection")
+    st.sidebar.subheader("Vizinhos (k-NN)")
+    knn_space = st.sidebar.selectbox("Espaço", ["meta", "meta_audio", "audio"], key="knn_space")
 
-with tab_vizinhos:
+    knn_search = st.sidebar.text_input("Buscar faixa por nome", key="knn_search")
+    if knn_search:
+        knn_options = [lbl for lbl in sorted_labels if knn_search.lower() in lbl.lower()]
+        if not knn_options:
+            st.sidebar.caption(f"Nenhuma faixa com {knn_search!r} no nome — mostrando a lista completa.")
+            knn_options = sorted_labels
+        else:
+            st.sidebar.caption(f"{len(knn_options)} faixa(s) encontrada(s).")
+    else:
+        knn_options = sorted_labels
+
+    knn_track_label = st.sidebar.selectbox("Faixa de referência", knn_options, key="knn_track")
+    knn_track_id = track_label_to_id[knn_track_label]
+    knn_k = st.sidebar.slider("k (nº de vizinhos)", 3, 30, 10, key="knn_k")
+    knn_metric = st.sidebar.selectbox("Métrica", ["cosine", "euclidean"], key="knn_metric")
+    knn_bpm_on = st.sidebar.checkbox("Filtrar por tolerância de BPM", value=True, key="knn_bpm_on")
+    knn_bpm_tol = st.sidebar.slider("Tolerância de BPM", 1, 15, 3, key="knn_bpm_tol") if knn_bpm_on else None
+    knn_camelot_on = st.sidebar.checkbox("Filtrar por key Camelot compatível", value=True, key="knn_camelot")
+    knn_projection = st.sidebar.radio("Projeção de fundo", ["UMAP", "PCA"], key="knn_projection")
+
     st.caption(
         "Etapa 4 da fase \"3 espaços + k-NN\" (ver `docs/decisions/ADR-001-tres-espacos-e-knn.md`) — "
         "busca de faixas parecidas via `src/similarity.py`, a mesma função usada pelo assistente de "
