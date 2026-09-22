@@ -40,7 +40,7 @@ Agrupamento não supervisionado (k-means) das faixas, em duas etapas:
 A comparação entre V1 e V2 é reportada como parte da análise — não só "rodamos um modelo", mas "o que mudou ao adicionar sinal de áudio".
 
 ### 3. Assistente de set via LLM
-Um chat que, dado um contexto de evento descrito em texto livre (line-up, horário, estética), primeiro busca sugestões dentro da própria biblioteca já catalogada e só recorre a busca externa quando a base local não cobre o pedido.
+Um chat que, dado um contexto de evento descrito em texto livre (line-up, horário, estética), primeiro busca sugestões dentro da própria biblioteca já catalogada e só recorre a busca externa quando a base local não cobre o pedido. Roda 100% local e gratuito — Ollama (`llama3.1:8b`) para o LLM com tool calling e DuckDuckGo para a busca externa, sem exigir nenhuma API key paga (`src/set_assistant.py`). Limitação documentada no próprio script: a busca estruturada na biblioteca é confiável, mas o encadeamento de 2 passos (base local → web) é instável num modelo local de 8B — um trade-off conhecido da escolha gratuita/local frente a um modelo de fronteira.
 
 ## Reprodutibilidade e privacidade
 
